@@ -1,8 +1,8 @@
-"""Tests for the pure move-resolution rules of the mini warehouse."""
+"""Tests for the pure move-resolution rules of the multi-agent warehouse."""
 
 import numpy as np
 
-from mini_warehouse.rules import DOWN, LEFT, RIGHT, STAY, UP, Cell, resolve_moves
+from multi_agent_warehouse.rules import DOWN, LEFT, RIGHT, STAY, UP, Cell, resolve_moves
 
 
 def resolve(

@@ -1,4 +1,4 @@
-"""Pure move-resolution rules for the mini warehouse.
+"""Pure move-resolution rules for the multi-agent warehouse.
 
 Walls and shelves make a robot stay put (not a collision). Robots may not share a cell and may
 not swap cells; a robot blocked by another robot stays, and then counts as a stayer.
