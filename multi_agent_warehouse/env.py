@@ -5,6 +5,7 @@ that ends a step on its target delivers and immediately gets a new one. Rewards 
 """
 
 from functools import cache
+from typing import TYPE_CHECKING
 
 import numpy as np
 from gymnasium.spaces import Box, Discrete
@@ -23,6 +24,9 @@ from multi_agent_warehouse.config import (
     STEP_PENALTY,
 )
 from multi_agent_warehouse.rules import ACTION_DELTAS, Cell, resolve_moves
+
+if TYPE_CHECKING:
+    from multi_agent_warehouse.render import Renderer
 
 
 class MultiAgentWarehouseEnv(ParallelEnv):
@@ -72,6 +76,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self.hud_note = ""
         self._deliveries: dict[str, int] = {}
         self._rng = np.random.default_rng()
+        self._renderer: Renderer | None = None
 
     @cache  # noqa: B019 (spaces are tiny and the env lives for the program)
     def observation_space(self, agent: str) -> Box:
@@ -156,12 +161,34 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             self.agents = []
         return observations, rewards, terminations, truncations, infos
 
-    def render(self) -> None:
-        """Stub: the renderer arrives in the next task."""
-        return None
+    def render(self) -> np.ndarray | None:
+        """Draw the current state. Returns the frame in `rgb_array` mode, else None.
+
+        `human` mode shows the window; with no render mode this does nothing. Pygame is only
+        imported here, on first use, and rendering never touches the env's RNG.
+        """
+        if self.render_mode is None:
+            return None
+        if self._renderer is None:
+            from multi_agent_warehouse.render import Renderer
+
+            self._renderer = Renderer(
+                self.shelves, window=self.render_mode == "human", fps=RENDER_FPS
+            )
+        hud = [
+            f"step {self.step_count}",
+            f"deliveries {self.total_deliveries}",
+            f"collisions {self.total_collisions}",
+            self.hud_note,
+        ]
+        frame = self._renderer.draw(self.positions, self.targets, hud)
+        return frame if self.render_mode == "rgb_array" else None
 
     def close(self) -> None:
-        """Stub: nothing to release yet."""
+        """Release the renderer if one exists. Safe to call more than once."""
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
 
     def _validate_actions(self, actions: dict[str, int]) -> None:
         """Raise ValueError unless there is exactly one valid action per live robot."""
