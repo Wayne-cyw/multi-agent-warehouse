@@ -6,21 +6,25 @@ from gymnasium.spaces import Box, Discrete
 from pettingzoo.test import parallel_api_test
 
 from multi_agent_warehouse import MultiAgentWarehouseEnv
+from multi_agent_warehouse.config import LAYOUT
 from multi_agent_warehouse.rules import DOWN, RIGHT, STAY, UP
 
 R0, R1, R2 = "robot_0", "robot_1", "robot_2"
+LAST = len(LAYOUT) - 1  # index of the last row and column; also the observation scale
+MID = LAST // 2
 
 
 def make_env(**kwargs) -> MultiAgentWarehouseEnv:
     """Build and reset an env, then park robots 1 and 2 far from the action.
 
-    Robot 1 sits at (7, 7) and robot 2 at (7, 0), each with a target in the middle row that a
-    parked robot never reaches, so tests only see the robots they move on purpose.
+    Robot 1 sits in the bottom-right corner and robot 2 in the bottom-left, each with a target on
+    the middle row that a parked robot never reaches, so tests only see the robots they move on
+    purpose. The tests also rely on the corners and the whole of rows 0, 3 and `MID` being free.
     """
     env = MultiAgentWarehouseEnv(**kwargs)
     env.reset(seed=0)
-    env.positions = {R0: (0, 0), R1: (7, 7), R2: (7, 0)}
-    env.targets = {R0: (7, 3), R1: (3, 0), R2: (3, 7)}
+    env.positions = {R0: (0, 0), R1: (LAST, LAST), R2: (LAST, 0)}
+    env.targets = {R0: (LAST, 3), R1: (MID, 0), R2: (MID, LAST)}
     return env
 
 
@@ -112,16 +116,16 @@ def test_delivery():
     assert new_target != (0, 1)
     assert env.total_deliveries == 1
     # The observation already shows the new target.
-    assert obs[R0][2] == pytest.approx((new_target[0] - 0) / 7)
-    assert obs[R0][3] == pytest.approx((new_target[1] - 1) / 7)
+    assert obs[R0][2] == pytest.approx((new_target[0] - 0) / LAST)
+    assert obs[R0][3] == pytest.approx((new_target[1] - 1) / LAST)
 
 
 def test_collision_reward():
     env = make_env()
     env.positions[R0] = (0, 0)
     env.positions[R1] = (0, 2)
-    env.targets[R0] = (7, 3)
-    env.targets[R1] = (7, 3)
+    env.targets[R0] = (LAST, 3)
+    env.targets[R1] = (LAST, 3)
     _, rewards, _, _, infos = env.step(stay_except(robot_0=RIGHT, robot_1=3))
     for agent in (R0, R1):
         assert rewards[agent] == pytest.approx(-0.01 - 0.1)
@@ -142,8 +146,8 @@ def test_bump_has_no_penalty():
 
 def test_observation_values():
     env = make_env()
-    env.targets[R0] = (7, 7)
-    env.positions[R1] = (7, 6)  # not adjacent to (0, 0)
+    env.targets[R0] = (LAST, LAST)
+    env.positions[R1] = (LAST, LAST - 1)  # not adjacent to (0, 0)
     obs, *_ = env.step(stay_except())
     assert obs[R0].dtype == np.float32
     np.testing.assert_allclose(obs[R0], [0, 0, 1, 1, 1, 0, 1, 0])

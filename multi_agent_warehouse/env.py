@@ -1,7 +1,7 @@
 """The multi-agent warehouse as a PettingZoo ParallelEnv.
 
-Robots move on a fixed 8 x 8 grid with shelves, each chasing its own target cell. A robot that
-ends a step on its target delivers and immediately gets a new one. Rewards are individual.
+Robots move on the shelved grid from `config.LAYOUT`, each chasing its own target cell. A robot
+that ends a step on its target delivers and immediately gets a new one. Rewards are individual.
 """
 
 from functools import cache
@@ -10,25 +10,19 @@ import numpy as np
 from gymnasium.spaces import Box, Discrete
 from pettingzoo import ParallelEnv
 
-from multi_agent_warehouse.rules import ACTION_DELTAS, Cell, resolve_moves
-
-LAYOUT: tuple[str, ...] = (
-    "........",
-    ".##..##.",
-    ".##..##.",
-    "........",
-    "........",
-    ".##..##.",
-    ".##..##.",
-    "........",
+from multi_agent_warehouse.config import (
+    COLLISION_PENALTY,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_N_ROBOTS,
+    DELIVERY_REWARD,
+    LAYOUT,
+    MAX_ROBOTS,
+    RENDER_FPS,
+    RENDER_MODES,
+    SHAPING_SCALE,
+    STEP_PENALTY,
 )
-
-MAX_ROBOTS = 6
-DELIVERY_REWARD = 1.0
-STEP_PENALTY = -0.01
-COLLISION_PENALTY = -0.1
-SHAPING_SCALE = 0.02
-RENDER_MODES = ("human", "rgb_array")
+from multi_agent_warehouse.rules import ACTION_DELTAS, Cell, resolve_moves
 
 
 class MultiAgentWarehouseEnv(ParallelEnv):
@@ -37,17 +31,17 @@ class MultiAgentWarehouseEnv(ParallelEnv):
     metadata = {
         "name": "multi_agent_warehouse_v0",
         "render_modes": list(RENDER_MODES),
-        "render_fps": 10,
+        "render_fps": RENDER_FPS,
     }
 
     def __init__(
         self,
-        n_robots: int = 3,
-        max_steps: int = 200,
+        n_robots: int = DEFAULT_N_ROBOTS,
+        max_steps: int = DEFAULT_MAX_STEPS,
         shaping: bool = False,
         render_mode: str | None = None,
     ) -> None:
-        """Create the env. `n_robots` is 1 to 6; `shaping` adds a distance-progress reward."""
+        """Create the env. `n_robots` is 1 to `MAX_ROBOTS`; `shaping` adds a progress reward."""
         if not 1 <= n_robots <= MAX_ROBOTS:
             raise ValueError(f"n_robots must be between 1 and {MAX_ROBOTS}, got {n_robots}")
         if max_steps < 1:
