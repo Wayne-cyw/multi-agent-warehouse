@@ -44,8 +44,12 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         max_steps: int = DEFAULT_MAX_STEPS,
         shaping: bool = False,
         render_mode: str | None = None,
+        render_fps: int = RENDER_FPS,
     ) -> None:
-        """Create the env. `n_robots` is 1 to `MAX_ROBOTS`; `shaping` adds a progress reward."""
+        """Create the env. `n_robots` is 1 to `MAX_ROBOTS`; `shaping` adds a progress reward.
+
+        `render_fps` paces the `human` window.
+        """
         if not 1 <= n_robots <= MAX_ROBOTS:
             raise ValueError(f"n_robots must be between 1 and {MAX_ROBOTS}, got {n_robots}")
         if max_steps < 1:
@@ -58,6 +62,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self.max_steps = max_steps
         self.shaping = shaping
         self.render_mode = render_mode
+        self.render_fps = render_fps
         self.possible_agents = [f"robot_{i}" for i in range(n_robots)]
         self.agents: list[str] = []
 
@@ -173,7 +178,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             from multi_agent_warehouse.render import Renderer
 
             self._renderer = Renderer(
-                self.shelves, window=self.render_mode == "human", fps=RENDER_FPS
+                self.shelves, window=self.render_mode == "human", fps=self.render_fps
             )
         hud = [
             f"step {self.step_count}",
