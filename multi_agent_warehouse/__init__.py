@@ -11,6 +11,6 @@ import python_ta.contracts
 
 python_ta.contracts.ENABLE_CONTRACT_CHECKING = os.environ.get("WAREHOUSE_CONTRACTS") == "1"
 
-from multi_agent_warehouse.env import MultiAgentWarehouseEnv  # noqa: E402
+from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 
 __all__ = ["MultiAgentWarehouseEnv"]
