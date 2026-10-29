@@ -1,14 +1,10 @@
 """Tests for the pygame renderer and `env.render`."""
 
-import os
+import numpy as np
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-
-import numpy as np  # noqa: E402
-
-from multi_agent_warehouse import MultiAgentWarehouseEnv  # noqa: E402
-from multi_agent_warehouse.config import LAYOUT  # noqa: E402
-from multi_agent_warehouse.render import (  # noqa: E402
+from multi_agent_warehouse import MultiAgentWarehouseEnv
+from multi_agent_warehouse.config import LAYOUT
+from multi_agent_warehouse.render import (
     CELL,
     FLOOR_COLOR,
     HUD_H,

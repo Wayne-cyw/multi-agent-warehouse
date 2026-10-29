@@ -40,7 +40,8 @@ def test_greedy_moves_along_larger_axis():
     assert greedy().act(obs(dr=0.5, dc=0.1))[R0] == DOWN
     assert greedy().act(obs(dr=-0.5, dc=0.1))[R0] == UP
     assert greedy().act(obs(dr=0.1, dc=-0.5))[R0] == LEFT
-    assert greedy().act(obs(dr=0.3, dc=0.3))[R0] in (DOWN, UP)  # ties go to rows
+    # A tie goes to rows.
+    assert greedy().act(obs(dr=0.3, dc=0.3))[R0] in (DOWN, UP)
     assert greedy().act(obs(dr=-0.3, dc=0.3))[R0] == UP
 
 
@@ -54,7 +55,8 @@ def test_greedy_sidesteps_when_other_axis_is_zero():
         assert policy.act(obs(dr=0, dc=0.5, right=1, up=1))[R0] in (DOWN, LEFT)
     seen = {policy.act(obs(dr=0, dc=0.5, right=1))[R0] for _ in range(50)}
     assert seen <= {UP, DOWN, LEFT}
-    assert len(seen) > 1  # it really is random, not a fixed fallback
+    # It is really random, not a fixed fallback.
+    assert len(seen) > 1
 
 
 def test_greedy_stays_when_boxed_in_or_on_target():

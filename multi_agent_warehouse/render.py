@@ -69,34 +69,14 @@ class Renderer:
 
         In window mode the frame is also shown, and the call waits to keep the frame rate.
         """
-        surface = self._surface
-        surface.fill(FLOOR_COLOR)
-        for row in range(self.rows):
-            for col in range(self.cols):
-                if self.shelves[row, col]:
-                    x, y = self.cell_origin(row, col)
-                    pygame.draw.rect(surface, SHELF_COLOR, (x, y, CELL, CELL))
-
-        for agent, (row, col) in targets.items():
-            x, y = self.cell_origin(row, col)
-            size = CELL - 2 * TARGET_INSET
-            rect = (x + TARGET_INSET, y + TARGET_INSET, size, size)
-            pygame.draw.rect(surface, _robot_color(agent), rect, TARGET_WIDTH)
-
-        for agent, (row, col) in positions.items():
-            x, y = self.cell_origin(row, col)
-            pygame.draw.circle(
-                surface, _robot_color(agent), (x + CELL // 2, y + CELL // 2), _ROBOT_RADIUS
-            )
-
+        self._surface.fill(FLOOR_COLOR)
+        self._draw_shelves()
+        self._draw_targets(targets)
+        self._draw_robots(positions)
         self._draw_hud(hud)
 
-        frame = np.ascontiguousarray(pygame.surfarray.array3d(surface).transpose(1, 0, 2))
-        if self._screen is not None and self._clock is not None:
-            self._screen.blit(surface, (0, 0))
-            pygame.display.flip()
-            pygame.event.pump()
-            self._clock.tick(self.fps)
+        frame = np.ascontiguousarray(pygame.surfarray.array3d(self._surface).transpose(1, 0, 2))
+        self._present()
         return frame
 
     def close(self) -> None:
@@ -108,6 +88,38 @@ class Renderer:
             pygame.display.quit()
         self._screen = None
         self._clock = None
+
+    def _draw_shelves(self) -> None:
+        """Fill every shelf cell."""
+        for row in range(self.rows):
+            for col in range(self.cols):
+                if self.shelves[row, col]:
+                    x, y = self.cell_origin(row, col)
+                    pygame.draw.rect(self._surface, SHELF_COLOR, (x, y, CELL, CELL))
+
+    def _draw_targets(self, targets: dict[str, Cell]) -> None:
+        """Outline each robot's target cell in the robot's colour."""
+        size = CELL - 2 * TARGET_INSET
+        for agent, (row, col) in targets.items():
+            x, y = self.cell_origin(row, col)
+            rect = (x + TARGET_INSET, y + TARGET_INSET, size, size)
+            pygame.draw.rect(self._surface, _robot_color(agent), rect, TARGET_WIDTH)
+
+    def _draw_robots(self, positions: dict[str, Cell]) -> None:
+        """Draw each robot as a filled circle centred in its cell."""
+        for agent, (row, col) in positions.items():
+            x, y = self.cell_origin(row, col)
+            center = (x + CELL // 2, y + CELL // 2)
+            pygame.draw.circle(self._surface, _robot_color(agent), center, _ROBOT_RADIUS)
+
+    def _present(self) -> None:
+        """In window mode, show the surface and wait to keep the frame rate; else do nothing."""
+        if self._screen is None or self._clock is None:
+            return
+        self._screen.blit(self._surface, (0, 0))
+        pygame.display.flip()
+        pygame.event.pump()
+        self._clock.tick(self.fps)
 
     def _draw_hud(self, lines: list[str]) -> None:
         """Draw the HUD bar with the non-empty `lines` side by side on one row."""
