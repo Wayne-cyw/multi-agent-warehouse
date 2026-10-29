@@ -7,6 +7,7 @@ the renderer lazily, so an env without a render mode never loads pygame.
 
 import numpy as np
 import pygame
+from python_ta.contracts import check_contracts
 
 from multi_agent_warehouse.config import RENDER_FPS
 from multi_agent_warehouse.rules import Cell
@@ -34,11 +35,42 @@ _HUD_GAP = 14
 _HUD_PAD = 10
 
 
+@check_contracts
 class Renderer:
-    """Draws the shelves, targets, robots and HUD; optionally in a window."""
+    """Draws the shelves, targets, robots and HUD; optionally in a window.
+
+    Attributes:
+        shelves: A boolean grid that is True where a shelf stands.
+        rows: The number of rows in the grid.
+        cols: The number of columns in the grid.
+        width: The width of the frame in pixels.
+        height: The height of the frame in pixels, including the HUD bar.
+        window: Whether frames are also shown in an on-screen window.
+        fps: The frame rate of the window.
+
+    Representation Invariants:
+        - self.rows > 0 and self.cols > 0
+        - self.shelves.shape == (self.rows, self.cols)
+        - self.width == self.cols * CELL
+        - self.height == HUD_H + self.rows * CELL
+        - self.fps > 0
+    """
+
+    shelves: np.ndarray
+    rows: int
+    cols: int
+    width: int
+    height: int
+    window: bool
+    fps: int
 
     def __init__(self, shelves: np.ndarray, window: bool = False, fps: int = RENDER_FPS) -> None:
-        """Set up for a boolean `shelves` grid. `window=True` opens a display at `fps`."""
+        """Set up for a boolean `shelves` grid. `window=True` opens a display at `fps`.
+
+        Preconditions:
+            - shelves.ndim == 2 and shelves.size > 0
+            - fps > 0
+        """
         self.shelves = shelves
         self.rows, self.cols = shelves.shape
         self.width = self.cols * CELL
@@ -59,7 +91,12 @@ class Renderer:
             self._clock = pygame.time.Clock()
 
     def cell_origin(self, row: int, col: int) -> tuple[int, int]:
-        """Top-left pixel `(x, y)` of a cell, below the HUD bar."""
+        """Top-left pixel `(x, y)` of a cell, below the HUD bar.
+
+        Preconditions:
+            - 0 <= row < self.rows
+            - 0 <= col < self.cols
+        """
         return col * CELL, HUD_H + row * CELL
 
     def draw(
@@ -68,6 +105,11 @@ class Renderer:
         """Draw one frame and return it as a `(height, width, 3)` uint8 array.
 
         In window mode the frame is also shown, and the call waits to keep the frame rate.
+
+        Preconditions:
+            - not self._closed
+            - all(0 <= r < self.rows and 0 <= c < self.cols for r, c in positions.values())
+            - all(0 <= r < self.rows and 0 <= c < self.cols for r, c in targets.values())
         """
         self._surface.fill(FLOOR_COLOR)
         self._draw_shelves()
@@ -98,7 +140,11 @@ class Renderer:
                     pygame.draw.rect(self._surface, SHELF_COLOR, (x, y, CELL, CELL))
 
     def _draw_targets(self, targets: dict[str, Cell]) -> None:
-        """Outline each robot's target cell in the robot's colour."""
+        """Outline each robot's target cell in the robot's colour.
+
+        Preconditions:
+            - all(agent.startswith("robot_") for agent in targets)
+        """
         size = CELL - 2 * TARGET_INSET
         for agent, (row, col) in targets.items():
             x, y = self.cell_origin(row, col)
@@ -106,7 +152,11 @@ class Renderer:
             pygame.draw.rect(self._surface, _robot_color(agent), rect, TARGET_WIDTH)
 
     def _draw_robots(self, positions: dict[str, Cell]) -> None:
-        """Draw each robot as a filled circle centred in its cell."""
+        """Draw each robot as a filled circle centred in its cell.
+
+        Preconditions:
+            - all(agent.startswith("robot_") for agent in positions)
+        """
         for agent, (row, col) in positions.items():
             x, y = self.cell_origin(row, col)
             center = (x + CELL // 2, y + CELL // 2)
@@ -133,6 +183,11 @@ class Renderer:
             x += text.get_width() + _HUD_GAP
 
 
+@check_contracts
 def _robot_color(agent: str) -> tuple[int, int, int]:
-    """The colour for a robot named like `robot_3`."""
+    """The colour for a robot named like `robot_3`.
+
+    Preconditions:
+        - agent.startswith("robot_") and agent.rsplit("_", 1)[1].isdigit()
+    """
     return ROBOT_COLORS[int(agent.rsplit("_", 1)[1]) % len(ROBOT_COLORS)]

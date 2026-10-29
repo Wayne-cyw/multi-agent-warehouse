@@ -6,7 +6,9 @@ Run `python play.py --help` for the flags.
 
 import argparse
 
+import numpy as np
 import pygame
+from python_ta.contracts import check_contracts
 
 from multi_agent_warehouse.agents import POLICIES, Policy
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS, MAX_ROBOTS, RENDER_FPS
@@ -15,22 +17,55 @@ from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 DEFAULT_POLICY = "greedy"
 
 
+@check_contracts
 class Demo:
-    """A window that steps one policy through endless episodes and reacts to key presses."""
+    """A window that steps one policy through endless episodes and reacts to key presses.
+
+    Attributes:
+        _policy_names: The names of every policy the P key cycles through.
+        _policy_name: The name of the policy that is running.
+        _policy: The running policy.
+        _env: The environment being shown.
+        _seed: The seed of the current episode.
+        _paused: Whether stepping is paused.
+        _observations: The latest observation of every live robot.
+
+    Representation Invariants:
+        - self._policy_name in self._policy_names
+        - self._seed >= 0
+    """
+
+    _policy_names: list[str]
+    _policy_name: str
+    _policy: Policy
+    _env: MultiAgentWarehouseEnv
+    _seed: int
+    _paused: bool
+    _observations: dict[str, np.ndarray]
 
     def __init__(self, policy_name: str, n_robots: int, seed: int, fps: int) -> None:
-        """Open the env for `n_robots` at `fps` and start the first episode with `seed`."""
+        """Open the env for `n_robots` at `fps` and start the first episode with `seed`.
+
+        Preconditions:
+            - policy_name in POLICIES
+            - 1 <= n_robots <= MAX_ROBOTS
+            - seed >= 0
+            - fps > 0
+        """
         self._policy_names = list(POLICIES)
         self._policy_name = policy_name
-        self._policy: Policy = POLICIES[policy_name]()
+        self._policy = POLICIES[policy_name]()
         self._env = MultiAgentWarehouseEnv(n_robots=n_robots, render_mode="human", render_fps=fps)
         self._seed = seed
         self._paused = False
-        self._observations: dict = {}
         self._restart(self._seed)
 
     def run(self, max_frames: int = 0) -> None:
-        """Loop until the user quits, or until `max_frames` frames when it is positive."""
+        """Loop until the user quits, or until `max_frames` frames when it is positive.
+
+        Preconditions:
+            - max_frames >= 0
+        """
         try:
             # The window opens on the first render, and pygame's event queue needs it to exist.
             self._render()
@@ -63,13 +98,21 @@ class Demo:
         return True
 
     def _advance(self) -> None:
-        """Step the episode once, starting a new episode first if the last one has ended."""
+        """Step the episode once, starting a new episode first if the last one has ended.
+
+        Preconditions:
+            - not self._paused
+        """
         if not self._env.agents:
             self._restart(self._seed + 1)
         self._observations, *_ = self._env.step(self._policy.act(self._observations))
 
     def _restart(self, seed: int) -> None:
-        """Start a new episode, seeding both the env and the policy."""
+        """Start a new episode, seeding both the env and the policy.
+
+        Preconditions:
+            - seed >= 0
+        """
         self._seed = seed
         self._observations, _ = self._env.reset(seed=seed)
         self._policy.reset(seed)
@@ -88,6 +131,7 @@ class Demo:
         self._env.render()
 
 
+@check_contracts
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Read the command line, exiting with a usage error on a bad value."""
     parser = argparse.ArgumentParser(description="Watch a policy run the warehouse.")
@@ -102,6 +146,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return args
 
 
+@check_contracts
 def main(argv: list[str] | None = None) -> None:
     """Run the demo with the command-line settings."""
     args = parse_args(argv)

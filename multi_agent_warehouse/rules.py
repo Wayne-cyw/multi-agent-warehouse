@@ -5,6 +5,7 @@ not swap cells; a robot blocked by another robot stays, and then counts as a sta
 """
 
 import numpy as np
+from python_ta.contracts import check_contracts
 
 Cell = tuple[int, int]
 
@@ -14,52 +15,76 @@ STAY, UP, DOWN, LEFT, RIGHT = 0, 1, 2, 3, 4
 ACTION_DELTAS: tuple[Cell, ...] = ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1))
 
 
-def _is_blocked(
-    rid: str, ids: list[str], positions: dict[str, Cell], proposals: dict[str, Cell]
-) -> bool:
-    """Whether a moving robot shares its target cell with, or swaps cells with, another robot."""
-    if proposals[rid] == positions[rid]:
-        return False
-    for other in ids:
-        if other == rid:
-            continue
-        same_cell = proposals[other] == proposals[rid]
-        swap = proposals[other] == positions[rid] and proposals[rid] == positions[other]
-        if same_cell or swap:
-            return True
-    return False
-
-
+@check_contracts
 def resolve_moves(
     positions: dict[str, Cell], actions: dict[str, int], shelves: np.ndarray
 ) -> tuple[dict[str, Cell], set[str]]:
     """Resolve simultaneous moves.
 
-    Returns the new position of every robot and the ids of robots that collided, meaning they
+    Return the new position of every robot and the ids of robots that collided, meaning they
     tried to move and were blocked by another robot (directly or through a blocked robot ahead).
     Bumping the grid edge or a shelf just keeps the robot in place. Inputs are not mutated.
+
+    Preconditions:
+        - set(positions) == set(actions)
+        - all(0 <= action < len(ACTION_DELTAS) for action in actions.values())
+        - shelves.ndim == 2
+        - every position lies inside the shelves grid
     """
-    height, width = shelves.shape
-    ids = sorted(positions)
-
-    proposals: dict[str, Cell] = {}
-    for rid in ids:
-        row, col = positions[rid]
-        d_row, d_col = ACTION_DELTAS[actions[rid]]
-        target = (row + d_row, col + d_col)
-        in_bounds = 0 <= target[0] < height and 0 <= target[1] < width
-        proposals[rid] = target if in_bounds and not shelves[target] else positions[rid]
-
-    moving = {rid for rid in ids if proposals[rid] != positions[rid]}
+    robot_ids = sorted(positions)
+    proposals = {
+        robot_id: _propose(positions[robot_id], actions[robot_id], shelves)
+        for robot_id in robot_ids
+    }
+    moving = {robot_id for robot_id in robot_ids if proposals[robot_id] != positions[robot_id]}
 
     # A blocked robot becomes a stayer, which can block others in turn: repeat to a fixed point.
     # Each round judges every robot against the same snapshot, then blocks them all at once.
     while True:
-        blocked = [rid for rid in ids if _is_blocked(rid, ids, positions, proposals)]
+        blocked = [
+            robot_id
+            for robot_id in robot_ids
+            if _is_blocked(robot_id, robot_ids, positions, proposals)
+        ]
         if not blocked:
             break
-        for rid in blocked:
-            proposals[rid] = positions[rid]
+        for robot_id in blocked:
+            proposals[robot_id] = positions[robot_id]
 
-    collided = {rid for rid in moving if proposals[rid] == positions[rid]}
+    collided = {robot_id for robot_id in moving if proposals[robot_id] == positions[robot_id]}
     return proposals, collided
+
+
+def _propose(position: Cell, action: int, shelves: np.ndarray) -> Cell:
+    """Return the cell a robot wants to enter, or its own cell if a wall or shelf is in the way.
+
+    Preconditions:
+        - 0 <= action < len(ACTION_DELTAS)
+        - shelves.ndim == 2
+    """
+    height, width = shelves.shape
+    d_row, d_col = ACTION_DELTAS[action]
+    target = (position[0] + d_row, position[1] + d_col)
+    in_bounds = 0 <= target[0] < height and 0 <= target[1] < width
+    return target if in_bounds and not shelves[target] else position
+
+
+def _is_blocked(
+    robot_id: str, robot_ids: list[str], positions: dict[str, Cell], proposals: dict[str, Cell]
+) -> bool:
+    """Whether a moving robot shares its target cell with, or swaps cells with, another robot.
+
+    Preconditions:
+        - robot_id in robot_ids
+        - set(robot_ids) == set(positions) == set(proposals)
+    """
+    if proposals[robot_id] == positions[robot_id]:
+        return False
+    for other in robot_ids:
+        if other == robot_id:
+            continue
+        same_cell = proposals[other] == proposals[robot_id]
+        swap = proposals[other] == positions[robot_id] and proposals[robot_id] == positions[other]
+        if same_cell or swap:
+            return True
+    return False

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from gymnasium.spaces import Box, Discrete
 from pettingzoo import ParallelEnv
+from python_ta.contracts import check_contracts
 
 from multi_agent_warehouse.config import (
     COLLISION_PENALTY,
@@ -28,14 +29,60 @@ if TYPE_CHECKING:
     from multi_agent_warehouse.render import Renderer
 
 
+@check_contracts
 class MultiAgentWarehouseEnv(ParallelEnv):
-    """Several robots deliver to personal target cells on a small shelved grid."""
+    """Several robots deliver to personal target cells on a small shelved grid.
+
+    Attributes:
+        max_steps: The number of steps after which an episode is truncated.
+        shaping: Whether each step also pays a small reward for moving closer to the target.
+        render_mode: How `render` draws (`human` or `rgb_array`), or None for no drawing.
+        render_fps: The frame rate of the `human` window.
+        possible_agents: The id of every robot, in order.
+        agents: The ids of the robots in the running episode; empty when none is running.
+        shelves: A boolean grid that is True where a shelf stands.
+        height: The number of rows in the grid.
+        width: The number of columns in the grid.
+        positions: The cell each live robot stands on.
+        targets: The cell each live robot is heading for.
+        step_count: The number of steps taken in this episode.
+        total_deliveries: The deliveries made by all robots in this episode.
+        total_collisions: The collisions suffered by all robots in this episode.
+        hud_note: Extra text shown in the HUD; empty for none.
+        observation_spaces: The observation space of each robot.
+        action_spaces: The action space of each robot.
+
+    Representation Invariants:
+        - 1 <= len(self.possible_agents) <= MAX_ROBOTS
+        - set(self.agents) <= set(self.possible_agents)
+        - self.max_steps >= 1
+        - 0 <= self.step_count <= self.max_steps
+        - self.total_deliveries >= 0
+        - self.total_collisions >= 0
+        - self.height > 0 and self.width > 0
+    """
 
     metadata = {
         "name": "multi_agent_warehouse_v0",
         "render_modes": list(RENDER_MODES),
         "render_fps": RENDER_FPS,
     }
+
+    max_steps: int
+    shaping: bool
+    render_mode: str | None
+    render_fps: int
+    possible_agents: list[str]
+    agents: list[str]
+    shelves: np.ndarray
+    height: int
+    width: int
+    positions: dict[str, Cell]
+    targets: dict[str, Cell]
+    step_count: int
+    total_deliveries: int
+    total_collisions: int
+    hud_note: str
 
     def __init__(
         self,
@@ -45,9 +92,16 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         render_mode: str | None = None,
         render_fps: int = RENDER_FPS,
     ) -> None:
-        """Create the env. `n_robots` is 1 to `MAX_ROBOTS`; `shaping` adds a progress reward.
+        """Create the env with `n_robots` robots.
 
-        `render_fps` paces the `human` window.
+        Preconditions:
+            - 1 <= n_robots <= MAX_ROBOTS
+            - max_steps >= 1
+            - render_mode is None or render_mode in RENDER_MODES
+            - render_fps > 0
+
+        Raise ValueError if a precondition is violated; python_ta cannot check the
+        module constants or keyword arguments these preconditions use.
         """
         if not 1 <= n_robots <= MAX_ROBOTS:
             raise ValueError(f"n_robots must be between 1 and {MAX_ROBOTS}, got {n_robots}")
@@ -57,13 +111,15 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             raise ValueError(
                 f"render_mode must be None or one of {RENDER_MODES}, got {render_mode!r}"
             )
+        if render_fps < 1:
+            raise ValueError(f"render_fps must be at least 1, got {render_fps}")
 
         self.max_steps = max_steps
         self.shaping = shaping
         self.render_mode = render_mode
         self.render_fps = render_fps
         self.possible_agents = [f"robot_{i}" for i in range(n_robots)]
-        self.agents: list[str] = []
+        self.agents = []
 
         self.shelves = np.array([[ch == "#" for ch in row] for row in LAYOUT], dtype=bool)
         self.height, self.width = self.shelves.shape
@@ -72,8 +128,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             (int(r), int(c)) for r, c in zip(*np.nonzero(~self.shelves), strict=True)
         ]
 
-        self.positions: dict[str, Cell] = {}
-        self.targets: dict[str, Cell] = {}
+        self.positions = {}
+        self.targets = {}
         self.step_count = 0
         self.total_deliveries = 0
         self.total_collisions = 0
@@ -82,21 +138,36 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self._rng = np.random.default_rng()
         self._renderer: Renderer | None = None
 
-        self._observation_space = Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
-        self._action_space = Discrete(len(ACTION_DELTAS))
+        self.observation_spaces = {
+            agent: Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+            for agent in self.possible_agents
+        }
+        self.action_spaces = {agent: Discrete(len(ACTION_DELTAS)) for agent in self.possible_agents}
 
     def observation_space(self, agent: str) -> Box:
-        """Eight floats in [-1, 1]: own cell, target offset, and four blocked-neighbour flags."""
-        return self._observation_space
+        """Eight floats in [-1, 1]: own cell, target offset, and four blocked-neighbour flags.
+
+        Preconditions:
+            - agent in self.possible_agents
+        """
+        return self.observation_spaces[agent]
 
     def action_space(self, agent: str) -> Discrete:
-        """Stay, up, down, left or right."""
-        return self._action_space
+        """Stay, up, down, left or right.
+
+        Preconditions:
+            - agent in self.possible_agents
+        """
+        return self.action_spaces[agent]
 
     def reset(
         self, seed: int | None = None, options: dict | None = None
     ) -> tuple[dict[str, np.ndarray], dict[str, dict]]:
-        """Start an episode. A seed makes a fresh generator; no seed continues the stream."""
+        """Start an episode. A seed makes a fresh generator; no seed continues the stream.
+
+        Preconditions:
+            - seed is None or seed >= 0
+        """
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self.agents = self.possible_agents[:]
@@ -113,7 +184,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         return self._observations(), infos
 
     def step(
-        self, actions: dict[str, int]
+        self, actions: dict[str, int | np.integer]
     ) -> tuple[
         dict[str, np.ndarray],
         dict[str, float],
@@ -121,10 +192,14 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         dict[str, bool],
         dict[str, dict],
     ]:
-        """Advance one step: validate, resolve moves, deliver, reward, tick, observe."""
+        """Advance one step: resolve moves, deliver, reward, tick, observe.
+
+        Preconditions:
+            - set(actions) == set(self.agents)
+            - all(self.action_spaces[a].contains(action) for a, action in actions.items())
+        """
         if not self.agents:
             return {}, {}, {}, {}, {}
-        self._validate_actions(actions)
 
         old_positions = self.positions
         new_positions, collided = resolve_moves(
@@ -158,7 +233,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         return observations, rewards, terminations, truncations, infos
 
     def render(self) -> np.ndarray | None:
-        """Draw the current state. Returns the frame in `rgb_array` mode, else None.
+        """Draw the current state. Return the frame in `rgb_array` mode, else None.
 
         `human` mode shows the window; with no render mode this does nothing. Pygame is only
         imported here, on first use, and rendering never touches the env's RNG.
@@ -187,7 +262,11 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             self._renderer = None
 
     def _reward(self, agent: str, old: Cell, new: Cell, collided: set[str]) -> float:
-        """One robot's reward for moving from `old` to `new` toward its current target."""
+        """One robot's reward for moving from `old` to `new` toward its current target.
+
+        Preconditions:
+            - agent in self.targets
+        """
         target = self.targets[agent]
         reward = STEP_PENALTY
         if new == target:
@@ -198,21 +277,12 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             reward += SHAPING_SCALE * (_manhattan(old, target) - _manhattan(new, target))
         return reward
 
-    def _validate_actions(self, actions: dict[str, int]) -> None:
-        """Raise ValueError unless there is exactly one valid action per live robot."""
-        if set(actions) != set(self.agents):
-            raise ValueError(
-                f"actions must have exactly the keys {self.agents}, got {sorted(actions)}"
-            )
-        for agent, action in actions.items():
-            is_int = isinstance(action, int | np.integer) and not isinstance(
-                action, bool | np.bool_
-            )
-            if not is_int or not 0 <= action < len(ACTION_DELTAS):
-                raise ValueError(f"invalid action for {agent}: {action!r} (expected int 0 to 4)")
-
     def _sample_target(self, cell: Cell) -> Cell:
-        """A random free cell other than `cell`."""
+        """A random free cell other than `cell`.
+
+        Preconditions:
+            - len(self._free_cells) > 1
+        """
         candidates = [c for c in self._free_cells if c != cell]
         return candidates[int(self._rng.integers(len(candidates)))]
 
@@ -224,7 +294,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             row, col = self.positions[agent]
             t_row, t_col = self.targets[agent]
             blocked = [
-                self._is_blocked_cell((row + d_row, col + d_col), occupied)
+                _is_blocked_cell((row + d_row, col + d_col), occupied, self.shelves)
                 for d_row, d_col in ACTION_DELTAS[1:]
             ]
             obs = np.array([row, col, t_row - row, t_col - col, *blocked], dtype=np.float32)
@@ -232,12 +302,18 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             observations[agent] = obs
         return observations
 
-    def _is_blocked_cell(self, cell: Cell, occupied: set[Cell]) -> bool:
-        """Whether a neighbour is off the grid, a shelf, or holds a robot."""
-        row, col = cell
-        if not (0 <= row < self.height and 0 <= col < self.width):
-            return True
-        return bool(self.shelves[cell]) or cell in occupied
+
+def _is_blocked_cell(cell: Cell, occupied: set[Cell], shelves: np.ndarray) -> bool:
+    """Whether a neighbour is off the grid, a shelf, or holds a robot.
+
+    Preconditions:
+        - shelves.ndim == 2
+    """
+    row, col = cell
+    height, width = shelves.shape
+    if not (0 <= row < height and 0 <= col < width):
+        return True
+    return bool(shelves[cell]) or cell in occupied
 
 
 def _manhattan(a: Cell, b: Cell) -> int:
