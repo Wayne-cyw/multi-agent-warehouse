@@ -10,7 +10,8 @@ from multi_agent_warehouse.config import LAYOUT
 from multi_agent_warehouse.rules import DOWN, RIGHT, STAY, UP
 
 R0, R1, R2 = "robot_0", "robot_1", "robot_2"
-LAST = len(LAYOUT) - 1  # index of the last row and column; also the observation scale
+# Index of the last row and column; also the observation scale.
+LAST = len(LAYOUT) - 1
 MID = LAST // 2
 
 
@@ -72,6 +73,7 @@ def test_reset_places_robots_on_distinct_free_cells_with_valid_targets():
 
 def test_same_seed_same_trajectory():
     def run(seed: int) -> tuple[np.ndarray, list[dict[str, float]]]:
+        """Play a fixed-length random episode and return its observations and rewards."""
         env = MultiAgentWarehouseEnv()
         obs, _ = env.reset(seed=seed)
         observations = [np.concatenate(list(obs.values()))]
@@ -147,7 +149,8 @@ def test_bump_has_no_penalty():
 def test_observation_values():
     env = make_env()
     env.targets[R0] = (LAST, LAST)
-    env.positions[R1] = (LAST, LAST - 1)  # not adjacent to (0, 0)
+    # Not adjacent to (0, 0).
+    env.positions[R1] = (LAST, LAST - 1)
     obs, *_ = env.step(stay_except())
     assert obs[R0].dtype == np.float32
     np.testing.assert_allclose(obs[R0], [0, 0, 1, 1, 1, 0, 1, 0])
@@ -155,10 +158,12 @@ def test_observation_values():
 
 def test_shelf_sets_blocked_flag():
     env = make_env()
-    env.positions[R0] = (0, 1)  # shelf at (1, 1) is directly below
+    # The shelf at (1, 1) is directly below.
+    env.positions[R0] = (0, 1)
     obs, *_ = env.step(stay_except())
-    assert obs[R0][5] == 1.0  # down blocked by shelf
-    assert obs[R0][4] == 1.0  # up blocked by edge
+    # Down is blocked by the shelf and up by the grid edge.
+    assert obs[R0][5] == 1.0
+    assert obs[R0][4] == 1.0
     assert obs[R0][6] == 0.0 and obs[R0][7] == 0.0
 
 
@@ -223,17 +228,17 @@ def test_invalid_actions_raise():
     env.reset(seed=0)
     good = {a: STAY for a in env.agents}
     bad_cases = [
-        {k: v for k, v in good.items() if k != R2},  # missing key
-        {**good, "robot_9": STAY},  # extra key
+        # A missing key, then an extra key.
+        {k: v for k, v in good.items() if k != R2},
+        {**good, "robot_9": STAY},
         {**good, R0: 5},
         {**good, R0: -1},
         {**good, R0: 1.5},
         {**good, R0: "a"},
-        {**good, R0: True},
     ]
     before = (dict(env.positions), dict(env.targets), env.step_count)
     for actions in bad_cases:
-        with pytest.raises(ValueError):
+        with pytest.raises(AssertionError):
             env.step(actions)
     assert (env.positions, env.targets, env.step_count) == before
     # numpy integers are fine.

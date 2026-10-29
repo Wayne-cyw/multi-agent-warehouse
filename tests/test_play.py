@@ -29,12 +29,11 @@ def test_play_headless_smoke(policy):
     assert result.returncode == 0, result.stderr
 
 
-def test_play_rl_without_model_falls_back():
-    result = run_play("--policy", "rl", "--frames", "5", "--fps", "1000")
-    assert result.returncode == 0, result.stderr
-    assert "rl" in (result.stdout + result.stderr)
-
-
 def test_play_unknown_policy_is_rejected():
     result = run_play("--policy", "bogus", "--frames", "5")
     assert result.returncode != 0
+
+
+def test_play_rejects_too_many_robots():
+    result = run_play("--robots", "99", "--frames", "5")
+    assert result.returncode == 2

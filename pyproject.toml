@@ -12,11 +12,11 @@ dependencies = [
     "gymnasium",
     "pettingzoo",
     "pygame",
+    "python-ta",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pillow"]
-rl = ["stable-baselines3", "supersuit", "torch"]
 
 [tool.setuptools.packages.find]
 include = ["multi_agent_warehouse*"]
