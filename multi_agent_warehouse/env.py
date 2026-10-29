@@ -4,7 +4,6 @@ Robots move on the shelved grid from `config.LAYOUT`, each chasing its own targe
 that ends a step on its target delivers and immediately gets a new one. Rewards are individual.
 """
 
-from functools import cache
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -83,15 +82,16 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self._rng = np.random.default_rng()
         self._renderer: Renderer | None = None
 
-    @cache  # noqa: B019 (spaces are tiny and the env lives for the program)
+        self._observation_space = Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+        self._action_space = Discrete(len(ACTION_DELTAS))
+
     def observation_space(self, agent: str) -> Box:
         """Eight floats in [-1, 1]: own cell, target offset, and four blocked-neighbour flags."""
-        return Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+        return self._observation_space
 
-    @cache  # noqa: B019
     def action_space(self, agent: str) -> Discrete:
         """Stay, up, down, left or right."""
-        return Discrete(5)
+        return self._action_space
 
     def reset(
         self, seed: int | None = None, options: dict | None = None
@@ -133,20 +133,11 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self.positions = new_positions
 
         # Rewards are measured against the targets held at the start of the step.
-        rewards: dict[str, float] = {}
-        delivered: list[str] = []
-        for agent in self.agents:
-            reward = STEP_PENALTY
-            if new_positions[agent] == self.targets[agent]:
-                reward += DELIVERY_REWARD
-                delivered.append(agent)
-            if agent in collided:
-                reward += COLLISION_PENALTY
-            if self.shaping:
-                before = _manhattan(old_positions[agent], self.targets[agent])
-                after = _manhattan(new_positions[agent], self.targets[agent])
-                reward += SHAPING_SCALE * (before - after)
-            rewards[agent] = reward
+        rewards = {
+            agent: self._reward(agent, old_positions[agent], new_positions[agent], collided)
+            for agent in self.agents
+        }
+        delivered = [a for a in self.agents if new_positions[a] == self.targets[a]]
 
         for agent in delivered:
             self._deliveries[agent] += 1
@@ -194,6 +185,18 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
+
+    def _reward(self, agent: str, old: Cell, new: Cell, collided: set[str]) -> float:
+        """One robot's reward for moving from `old` to `new` toward its current target."""
+        target = self.targets[agent]
+        reward = STEP_PENALTY
+        if new == target:
+            reward += DELIVERY_REWARD
+        if agent in collided:
+            reward += COLLISION_PENALTY
+        if self.shaping:
+            reward += SHAPING_SCALE * (_manhattan(old, target) - _manhattan(new, target))
+        return reward
 
     def _validate_actions(self, actions: dict[str, int]) -> None:
         """Raise ValueError unless there is exactly one valid action per live robot."""

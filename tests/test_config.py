@@ -6,6 +6,7 @@ from multi_agent_warehouse.config import LAYOUT, MAX_ROBOTS
 
 
 def free_cells() -> set[tuple[int, int]]:
+    """Every `(row, col)` of floor in the layout."""
     return {(r, c) for r, row in enumerate(LAYOUT) for c, ch in enumerate(row) if ch == "."}
 
 
