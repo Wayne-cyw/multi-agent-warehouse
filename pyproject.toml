@@ -12,6 +12,7 @@ dependencies = [
     "gymnasium",
     "pettingzoo",
     "pygame",
+    "python-ta",
 ]
 
 [project.optional-dependencies]

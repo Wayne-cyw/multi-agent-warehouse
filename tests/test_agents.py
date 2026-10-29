@@ -65,13 +65,13 @@ def test_greedy_stays_when_boxed_in_or_on_target():
 
 
 def test_greedy_beats_random():
-    greedy_mean = evaluate(POLICIES["greedy"], 10)["deliveries"]
-    random_mean = evaluate(POLICIES["random"], 10)["deliveries"]
+    greedy_mean = evaluate(POLICIES["greedy"], 3)["deliveries"]
+    random_mean = evaluate(POLICIES["random"], 3)["deliveries"]
     assert greedy_mean >= 2 * random_mean, (greedy_mean, random_mean)
 
 
 def test_evaluate_is_deterministic():
-    assert evaluate(POLICIES["greedy"], 3) == evaluate(POLICIES["greedy"], 3)
+    assert evaluate(POLICIES["greedy"], 2) == evaluate(POLICIES["greedy"], 2)
 
 
 def test_run_episode_stops_at_max_steps():

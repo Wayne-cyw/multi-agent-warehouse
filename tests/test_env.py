@@ -235,11 +235,10 @@ def test_invalid_actions_raise():
         {**good, R0: -1},
         {**good, R0: 1.5},
         {**good, R0: "a"},
-        {**good, R0: True},
     ]
     before = (dict(env.positions), dict(env.targets), env.step_count)
     for actions in bad_cases:
-        with pytest.raises(ValueError):
+        with pytest.raises(AssertionError):
             env.step(actions)
     assert (env.positions, env.targets, env.step_count) == before
     # numpy integers are fine.

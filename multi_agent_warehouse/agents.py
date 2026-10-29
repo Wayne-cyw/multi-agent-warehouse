@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 import numpy as np
+from python_ta.contracts import check_contracts
 
 from multi_agent_warehouse.rules import ACTION_DELTAS, DOWN, LEFT, RIGHT, STAY, UP
 
@@ -15,47 +16,85 @@ from multi_agent_warehouse.rules import ACTION_DELTAS, DOWN, LEFT, RIGHT, STAY, 
 _DR, _DC, _BLOCKED = 2, 3, 4
 
 
+@check_contracts
 class Policy(ABC):
     """A rule that turns every robot's observation into an action.
 
     A policy owns a random generator, so a seeded `reset` makes a whole episode repeatable.
+
+    Attributes:
+        _rng: The generator behind the policy's random choices.
+
+    Representation Invariants:
+        - self._rng is not None
     """
+
+    _rng: np.random.Generator
 
     def __init__(self) -> None:
         """Create the policy with an unseeded generator."""
         self._rng = np.random.default_rng()
 
     def reset(self, seed: int | None = None) -> None:
-        """Start an episode with a fresh generator; a seed makes it repeatable."""
+        """Start an episode with a fresh generator; a seed makes it repeatable.
+
+        Preconditions:
+            - seed is None or seed >= 0
+        """
         self._rng = np.random.default_rng(seed)
 
     @abstractmethod
     def act(self, observations: dict[str, np.ndarray]) -> dict[str, int]:
-        """Pick one action per observed robot."""
+        """Pick one action per observed robot.
+
+        Preconditions:
+            - all(len(obs) == 8 for obs in observations.values())
+        """
 
 
+@check_contracts
 class RandomPolicy(Policy):
-    """Every robot picks one of the five actions uniformly at random."""
+    """Every robot picks one of the five actions uniformly at random.
+
+    Representation Invariants:
+        - self._rng is not None
+    """
 
     def act(self, observations: dict[str, np.ndarray]) -> dict[str, int]:
-        """A uniform action per robot, drawn in sorted id order so a seed repeats exactly."""
+        """A uniform action per robot, drawn in sorted id order so a seed repeats exactly.
+
+        Preconditions:
+            - all(len(obs) == 8 for obs in observations.values())
+        """
         return {
             agent: int(self._rng.integers(len(ACTION_DELTAS))) for agent in sorted(observations)
         }
 
 
+@check_contracts
 class GreedyPolicy(Policy):
-    """Walk toward the target along the longer axis, sidestepping at random when stuck."""
+    """Walk toward the target along the longer axis, sidestepping at random when stuck.
+
+    Representation Invariants:
+        - self._rng is not None
+    """
 
     def act(self, observations: dict[str, np.ndarray]) -> dict[str, int]:
-        """One greedy action per robot, in sorted id order."""
+        """One greedy action per robot, in sorted id order.
+
+        Preconditions:
+            - all(len(obs) == 8 for obs in observations.values())
+        """
         return {agent: self._act_one(observations[agent]) for agent in sorted(observations)}
 
     def _act_one(self, obs: np.ndarray) -> int:
         """Choose one robot's action from its own observation.
 
-        Prefers the move along the larger offset (rows on a tie), then the other axis, then any
-        open neighbour at random, and stays when boxed in or already on the target.
+        Prefer the move along the larger offset (rows on a tie), then the other axis, then any
+        open neighbour at random, and stay when boxed in or already on the target.
+
+        Preconditions:
+            - len(obs) == 8
         """
         d_row, d_col = float(obs[_DR]), float(obs[_DC])
         if d_row == 0 and d_col == 0:
@@ -77,7 +116,12 @@ class GreedyPolicy(Policy):
 
 
 def _is_blocked(obs: np.ndarray, action: int) -> bool:
-    """Whether the observation flags the neighbour in the direction of `action` as blocked."""
+    """Whether the observation flags the neighbour in the direction of `action` as blocked.
+
+    Preconditions:
+        - len(obs) == 8
+        - action in (UP, DOWN, LEFT, RIGHT)
+    """
     return bool(obs[_BLOCKED + action - 1])
 
 
