@@ -1,5 +1,8 @@
 """Tests for the pygame renderer and `env.render`."""
 
+import subprocess
+import sys
+
 import numpy as np
 
 from multi_agent_warehouse import MultiAgentWarehouseEnv
@@ -108,16 +111,34 @@ def test_rendering_does_not_change_trajectory():
     obs_a, _ = plain.reset(seed=7)
     obs_b, _ = drawn.reset(seed=7)
     drawn.render()
+    for env in (plain, drawn):
+        env.targets["robot_0"] = env.positions["robot_0"]
     action_rng = np.random.default_rng(3)
-    for _ in range(30):
+    for step in range(30):
         actions = {a: int(action_rng.integers(5)) for a in plain.agents}
+        if step == 0:
+            actions["robot_0"] = 0
         obs_a, rew_a, *_ = plain.step(actions)
         obs_b, rew_b, *_ = drawn.step(actions)
         drawn.render()
         assert rew_a == rew_b
         for agent in obs_a:
             np.testing.assert_array_equal(obs_a[agent], obs_b[agent])
+    assert plain.total_deliveries >= 1
+    assert plain._rng.bit_generator.state == drawn._rng.bit_generator.state
     drawn.close()
+
+
+def test_env_does_not_import_pygame_until_it_renders():
+    code = (
+        "import sys\n"
+        "from multi_agent_warehouse import MultiAgentWarehouseEnv\n"
+        "env = MultiAgentWarehouseEnv()\n"
+        "env.reset(seed=0)\n"
+        "env.step({a: 1 for a in env.agents})\n"
+        "assert 'pygame' not in sys.modules\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=60)
 
 
 def test_hud_note_changes_the_frame():
