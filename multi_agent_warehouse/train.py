@@ -15,15 +15,21 @@ def train(
     n_envs: int = 8,
     seed: int = 0,
     out: str = "models/ppo_multi_agent_warehouse",
+    n_steps: int = 128,
+    batch_size: int = 256,
+    verbose: int = 0,
 ) -> Path:
     """Train a shared-weights PPO agent and return the path of the saved zip.
 
     Each robot becomes one sub-environment of a vectorised env, and `n_envs` copies are
-    concatenated, so a single network learns from every robot's experience.
+    concatenated, so a single network learns from every robot's experience. SuperSuit makes each
+    robot its own sub-environment, so one rollout holds `n_steps * n_robots * n_envs` samples.
 
     Preconditions:
         - total_steps >= 1
         - n_envs >= 1
+        - n_steps >= 1
+        - batch_size >= 1
     """
     import supersuit
     from stable_baselines3 import PPO
@@ -40,7 +46,7 @@ def train(
     set_random_seed(seed)
     vec_env.venv.reset(seed=seed)
 
-    model = PPO("MlpPolicy", vec_env, verbose=0)
+    model = PPO("MlpPolicy", vec_env, n_steps=n_steps, batch_size=batch_size, verbose=verbose)
     model.learn(total_steps)
 
     path = Path(out)
@@ -57,8 +63,14 @@ def main() -> None:
     parser.add_argument("--envs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default="models/ppo_multi_agent_warehouse")
+    parser.add_argument("--n-steps", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--verbose", type=int, default=0)
     args = parser.parse_args()
-    print(f"saved {train(args.steps, args.envs, args.seed, args.out)}")
+    path = train(
+        args.steps, args.envs, args.seed, args.out, args.n_steps, args.batch_size, args.verbose
+    )
+    print(f"saved {path}")
 
 
 if __name__ == "__main__":
