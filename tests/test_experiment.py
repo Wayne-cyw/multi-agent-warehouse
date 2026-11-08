@@ -54,6 +54,18 @@ def _curve_keys(directory: Path) -> list[tuple[str, str, str, str]]:
     return [(r["variant"], r["seed"], r["timesteps"], r["mode"]) for r in rows]
 
 
+def _curve_by_key(directory: Path) -> dict[tuple[str, str, str, str], dict[str, str]]:
+    rows = _rows(directory / "eval_curve.csv")
+    return {(r["variant"], r["seed"], r["timesteps"], r["mode"]): r for r in rows}
+
+
+def _write_curve(directory: Path, rows: list[dict[str, str]]) -> None:
+    with open(directory / "eval_curve.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CURVE_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 class _Stop(Exception):
     pass
 
@@ -181,7 +193,17 @@ def test_baselines_use_the_same_eval_seeds(finished):
 def test_interrupted_run_is_completed_on_rerun(finished, tmp_path, monkeypatch):
     shutil.copytree(finished, tmp_path / "tiny")
     lost = _manifest(finished)["train_seeds"][1]
-    shutil.rmtree(tmp_path / "tiny" / "legacy" / f"seed_{lost}")
+    # The lost run stopped after its checkpoint but before final.zip, and its old rows are stale:
+    # the rerun must wipe both instead of keeping them.
+    partial = tmp_path / "tiny" / "legacy" / f"seed_{lost}"
+    (partial / "final.zip").unlink()
+    (partial / "stale.txt").write_text("partial")
+    assert any((partial / "checkpoints").iterdir())
+    rows = _rows(finished / "eval_curve.csv")
+    for row in rows:
+        if row["seed"] == str(lost):
+            row["mean_deliveries"] = "999.0"
+    _write_curve(tmp_path / "tiny", rows)
     trained = []
 
     # Restoring the finished run stands in for retraining, which the shared run already covers.
@@ -196,9 +218,10 @@ def test_interrupted_run_is_completed_on_rerun(finished, tmp_path, monkeypatch):
     directory = experiment.run_experiment("tiny", ["legacy"], out_root=tmp_path, **TINY)
 
     assert trained == [lost]
+    assert not (partial / "stale.txt").exists()
     keys = _curve_keys(directory)
     assert Counter(keys).most_common(1)[0][1] == 1
-    assert set(keys) == set(_curve_keys(finished))
+    assert _curve_by_key(directory) == _curve_by_key(finished)
     assert len(_rows(directory / "baselines.csv")) == 2
 
     trained.clear()
@@ -206,6 +229,30 @@ def test_interrupted_run_is_completed_on_rerun(finished, tmp_path, monkeypatch):
 
     assert trained == []
     assert len(_curve_keys(directory)) == len(keys)
+
+
+def test_partial_evaluation_is_completed_on_rerun(finished, tmp_path, monkeypatch):
+    shutil.copytree(finished, tmp_path / "tiny")
+    seed = str(_manifest(finished)["train_seeds"][0])
+    rows = _rows(finished / "eval_curve.csv")
+    missing = {("legacy", seed, "1536", "deterministic"), ("legacy", seed, "3072", "sampled")}
+    kept = [r for r in rows if (r["variant"], r["seed"], r["timesteps"], r["mode"]) not in missing]
+    assert len(kept) == len(rows) - 2
+    _write_curve(tmp_path / "tiny", kept)
+
+    def no_fit(cfg, out, log_dir=None, verbose=0):
+        raise AssertionError("a finished run must not be retrained")
+
+    monkeypatch.setattr(experiment, "fit", no_fit)
+
+    directory = experiment.run_experiment("tiny", ["legacy"], out_root=tmp_path, **TINY)
+
+    resumed = _rows(directory / "eval_curve.csv")
+    assert resumed[: len(kept)] == kept
+    added = {(r["variant"], r["seed"], r["timesteps"], r["mode"]) for r in resumed[len(kept) :]}
+    assert added == missing
+    assert _curve_by_key(directory) == _curve_by_key(finished)
+    assert len(_curve_keys(directory)) == len(rows)
 
 
 def test_rerun_with_conflicting_seeds_is_rejected(finished, tmp_path):
