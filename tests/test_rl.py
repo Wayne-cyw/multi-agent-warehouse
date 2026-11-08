@@ -264,9 +264,10 @@ def test_rl_policy_rejects_wrong_observation_size():
 
     from multi_agent_warehouse.agents import MODEL_PATH, RLPolicy
 
-    if not MODEL_PATH.exists():
-        pytest.skip("committed model is missing")
-    policy = RLPolicy(MODEL_PATH)
+    legacy = MODEL_PATH.with_name("ppo_v1_300k.zip")
+    if not legacy.exists():
+        pytest.skip("committed legacy model is missing")
+    policy = RLPolicy(legacy)
 
     with pytest.raises(ValueError, match="expects 8"):
         policy.act({"robot_0": np.zeros(14, dtype=np.float32)})
