@@ -36,6 +36,9 @@ class MultiAgentWarehouseEnv(ParallelEnv):
     Attributes:
         max_steps: The number of steps after which an episode is truncated.
         shaping: Whether each step also pays a small reward for moving closer to the target.
+        collision_penalty: The (non-positive) reward added when a robot collides.
+        shaping_scale: The (non-negative) reward per cell of progress toward the target when
+            `shaping` is on.
         render_mode: How `render` draws (`human` or `rgb_array`), or None for no drawing.
         render_fps: The frame rate of the `human` window.
         possible_agents: The id of every robot, in order.
@@ -56,6 +59,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         - 1 <= len(self.possible_agents) <= MAX_ROBOTS
         - set(self.agents) <= set(self.possible_agents)
         - self.max_steps >= 1
+        - self.collision_penalty <= 0
+        - self.shaping_scale >= 0
         - 0 <= self.step_count <= self.max_steps
         - self.total_deliveries >= 0
         - self.total_collisions >= 0
@@ -70,6 +75,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
 
     max_steps: int
     shaping: bool
+    collision_penalty: float
+    shaping_scale: float
     render_mode: str | None
     render_fps: int
     possible_agents: list[str]
@@ -91,6 +98,9 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         shaping: bool = False,
         render_mode: str | None = None,
         render_fps: int = RENDER_FPS,
+        *,
+        collision_penalty: float = COLLISION_PENALTY,
+        shaping_scale: float = SHAPING_SCALE,
     ) -> None:
         """Create the env with `n_robots` robots.
 
@@ -99,6 +109,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             - max_steps >= 1
             - render_mode is None or render_mode in RENDER_MODES
             - render_fps > 0
+            - collision_penalty <= 0
+            - shaping_scale >= 0
 
         Raise ValueError if a precondition is violated; python_ta cannot check the
         module constants or keyword arguments these preconditions use.
@@ -113,9 +125,15 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             )
         if render_fps < 1:
             raise ValueError(f"render_fps must be at least 1, got {render_fps}")
+        if collision_penalty > 0:
+            raise ValueError(f"collision_penalty must be at most 0, got {collision_penalty}")
+        if shaping_scale < 0:
+            raise ValueError(f"shaping_scale must be at least 0, got {shaping_scale}")
 
         self.max_steps = max_steps
         self.shaping = shaping
+        self.collision_penalty = collision_penalty
+        self.shaping_scale = shaping_scale
         self.render_mode = render_mode
         self.render_fps = render_fps
         self.possible_agents = [f"robot_{i}" for i in range(n_robots)]
@@ -223,8 +241,14 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self.step_count += 1
         truncated = self.step_count >= self.max_steps
         observations = self._observations()
+        # SB3 only bootstraps the value at a time limit when this key is True.
         infos = {
-            a: {"deliveries": self._deliveries[a], "collided": a in collided} for a in self.agents
+            a: {
+                "deliveries": self._deliveries[a],
+                "collided": a in collided,
+                "TimeLimit.truncated": truncated,
+            }
+            for a in self.agents
         }
         terminations = dict.fromkeys(self.agents, False)
         truncations = dict.fromkeys(self.agents, truncated)
@@ -272,9 +296,9 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         if new == target:
             reward += DELIVERY_REWARD
         if agent in collided:
-            reward += COLLISION_PENALTY
+            reward += self.collision_penalty
         if self.shaping:
-            reward += SHAPING_SCALE * (_manhattan(old, target) - _manhattan(new, target))
+            reward += self.shaping_scale * (_manhattan(old, target) - _manhattan(new, target))
         return reward
 
     def _sample_target(self, cell: Cell) -> Cell:

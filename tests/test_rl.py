@@ -52,3 +52,24 @@ def test_available_policies_with_model(monkeypatch, tmp_path):
     monkeypatch.setattr(agents, "MODEL_PATH", path)
 
     assert "rl" in agents.available_policies()
+
+
+def test_vec_env_exposes_truncation_flag_and_terminal_observation():
+    import numpy as np
+    import supersuit
+
+    from multi_agent_warehouse.env import MultiAgentWarehouseEnv
+
+    env = MultiAgentWarehouseEnv(shaping=True)
+    vec_env = supersuit.pettingzoo_env_to_vec_env_v1(env)
+    vec_env = supersuit.concat_vec_envs_v1(vec_env, 1, num_cpus=1, base_class="stable_baselines3")
+    vec_env.reset()
+    actions = np.zeros(vec_env.num_envs, dtype=np.int64)
+    for _ in range(env.max_steps - 1):
+        *_, infos = vec_env.step(actions)
+        assert not any(info["TimeLimit.truncated"] for info in infos)
+    _, _, dones, infos = vec_env.step(actions)
+
+    assert all(dones)
+    assert all(info["TimeLimit.truncated"] for info in infos)
+    assert all("terminal_observation" in info for info in infos)

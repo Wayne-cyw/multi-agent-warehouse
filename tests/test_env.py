@@ -6,7 +6,9 @@ from gymnasium.spaces import Box, Discrete
 from pettingzoo.test import parallel_api_test
 
 from multi_agent_warehouse import MultiAgentWarehouseEnv
+from multi_agent_warehouse.agents import GreedyPolicy, RandomPolicy
 from multi_agent_warehouse.config import LAYOUT
+from multi_agent_warehouse.evaluate import run_episode
 from multi_agent_warehouse.rules import DOWN, RIGHT, STAY, UP
 
 R0, R1, R2 = "robot_0", "robot_1", "robot_2"
@@ -247,5 +249,52 @@ def test_invalid_actions_raise():
 
 def test_invalid_constructor_args_raise():
     for kwargs in ({"n_robots": 0}, {"n_robots": 7}, {"render_mode": "bogus"}, {"max_steps": 0}):
+        with pytest.raises(ValueError):
+            MultiAgentWarehouseEnv(**kwargs)
+
+
+# Results of the default env before reward parameters were added; they must never drift.
+PINNED_GREEDY = {"deliveries": 18, "collisions": 338}
+PINNED_RANDOM = {"deliveries": 3, "collisions": 5}
+
+
+def test_default_episodes_match_pinned_results():
+    assert run_episode(MultiAgentWarehouseEnv(), GreedyPolicy(), 1000) == PINNED_GREEDY
+    assert run_episode(MultiAgentWarehouseEnv(), RandomPolicy(), 1000) == PINNED_RANDOM
+
+
+def test_custom_collision_penalty_is_used():
+    env = make_env(collision_penalty=-0.5)
+    env.positions[R0] = (0, 0)
+    env.positions[R1] = (0, 2)
+    env.targets[R0] = (LAST, 3)
+    env.targets[R1] = (LAST, 3)
+    _, rewards, *_ = env.step(stay_except(robot_0=RIGHT, robot_1=3))
+    assert rewards[R0] == pytest.approx(-0.01 - 0.5)
+    assert rewards[R1] == pytest.approx(-0.01 - 0.5)
+    assert rewards[R2] == pytest.approx(-0.01)
+
+
+def test_custom_shaping_scale_is_used():
+    env = make_env(shaping=True, shaping_scale=0.1)
+    env.targets[R0] = (0, 3)
+    _, rewards, *_ = env.step(stay_except(robot_0=RIGHT))
+    assert rewards[R0] == pytest.approx(-0.01 + 0.1)
+
+
+def test_truncation_flag_only_on_last_step():
+    env = MultiAgentWarehouseEnv()
+    env.reset(seed=0)
+    actions = dict.fromkeys(env.agents, STAY)
+    for _ in range(env.max_steps - 1):
+        _, _, _, _, infos = env.step(actions)
+        assert all(info["TimeLimit.truncated"] is False for info in infos.values())
+    _, _, _, truncations, infos = env.step(actions)
+    assert all(truncations.values())
+    assert all(info["TimeLimit.truncated"] is True for info in infos.values())
+
+
+def test_invalid_reward_parameters_raise():
+    for kwargs in ({"collision_penalty": 0.1}, {"shaping_scale": -0.1}):
         with pytest.raises(ValueError):
             MultiAgentWarehouseEnv(**kwargs)
