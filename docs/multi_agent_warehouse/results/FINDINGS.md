@@ -18,7 +18,7 @@ Deliveries 51.12 ± 4.55 (min 44.44, max 57.26); collisions 172.16 ± 32.21. The
 
 ## (b) Does truncation bootstrapping move the 300k score?
 
-E1 `base` at 300k: 47.81 ± 4.41 deliveries, 207.14 ± 29.47 collisions; E0 `legacy` at 300k: 51.12 ± 4.55, 172.16 ± 32.21. The difference (-3.3 deliveries) is smaller than either seed std and the standard error of the difference is about 2.9, so it is within seed noise (and unpaired: different eval blocks). There is no evidence that bootstrapping helps at 300k; if anything the point estimate is lower. Both variants show the same early dip (see below), so bootstrapping alone does not remove it.
+E1 `base` at 300k: 47.81 ± 4.41 deliveries, 207.14 ± 29.47 collisions; E0 `legacy` at 300k: 51.12 ± 4.55, 172.16 ± 32.21. The difference (-3.3 deliveries) is smaller than either seed std and the standard error of the difference is about 2.9, so it is within seed noise (and unpaired: different eval blocks). There is no evidence that bootstrapping helps at 300k; if anything the point estimate is lower. Both variants show a decline after the early plateau (see below); E0's decline is within seed noise, so bootstrapping alone is not shown to remove it.
 
 ## (c) Where do deliveries stop improving (E1, sampled)?
 
@@ -41,7 +41,7 @@ Deterministic is far worse at every checkpoint and every seed, and collisions ar
 
 E0 `legacy` rows (50k / 100k / 150k / 200k / 250k / 300k), sampled deliveries: 50.44 ± 1.92, 54.70 ± 1.03, 52.66 ± 2.88, 52.95 ± 1.80, 52.34 ± 2.98, 51.12 ± 4.55; sampled collisions: 57.35, 107.31, 149.88, 157.77, 164.45, 172.16; deterministic deliveries: 7.57, 9.18, 10.37, 11.12, 10.89, 11.08; deterministic collisions: 226.85, 277.19, 323.40, 337.26, 329.42, 330.98 (the 300k row is from the E0 report).
 
-The deterministic policy delivers roughly the same as the greedy baseline (13.5 to 14.1 deliveries, 391 to 411 collisions) and approaches its collision count (393 at 3M). This policy is evidently stochastic by necessity: the argmax action presumably gets robots stuck against each other, so evaluating the deterministic policy would understate the trained agent. The gap does not close with training (it widens from 45 to 48 deliveries), and deterministic collisions rise with training (255 to 393). I did not investigate the mechanism beyond this; the behaviour is observed, not diagnosed.
+The deterministic policy delivers roughly the same as the greedy baseline (13.5 to 14.1 deliveries, 391 to 411 collisions) and approaches its collision count (393 at 3M). Untested hypothesis: the policy needs stochasticity to work, e.g. the argmax action may get robots stuck against each other, in which case deterministic evaluation would understate the trained agent. The gap does not close with training (it widens from 45 to 48 deliveries), and deterministic collisions rise with training (255 to 393). I did not investigate the mechanism beyond this; the behaviour is observed, not diagnosed.
 
 ## (e) Do collisions fall as deliveries rise?
 
@@ -55,3 +55,54 @@ Not early. Over the first 300k steps (both experiments), sampled collisions rise
 - The initial plateau and dip (about 50k to 300k) appears in both variants and in the training reward diagnostic (peak about 15 at 80k, drop to about 9 to 10, slow recovery over 1M+ steps).
 
 Figures: `e1/learning_curve_deliveries.png`, `e1/learning_curve_collisions.png`, `e1/sampled_vs_deterministic_base.png`, `e1/diagnostics_base.png`.
+
+# E2 sweep (hyperparameters and reward terms)
+
+## E2 settings actually used
+
+- 10 variants (`base` plus nine one-field changes, each equal to `base` in every other field), 5 training seeds each, 1M steps (nominal; the checkpoint is really 1,001,472 steps), code at commit `374ce40`. Training seeds 692, 257, 481, 254, 533 (random draw, in `manifest.json`); eval seed base 184263377, 100 episodes, shared by all variants including `base` (so comparisons are paired on one eval block, but not paired by seed).
+- Wall clock 54 min 17 s (3257 s) for 50 training runs and their evaluations, `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`.
+- All numbers: sampled policy, final (1M) checkpoint, mean over 5 seeds of each seed's 100-episode mean; "±" is the seed std (n-1). Greedy baseline on this block: 15.71 deliveries, 401.5 collisions; random: 2.49, 13.2.
+- Evaluation always uses raw collisions with `shaping=False`; `coll_*` and `shape_*` change only the training reward.
+- Verdict rule: Δ = variant mean − base mean; SE = sqrt(s_v²/n + s_b²/n); "helps" if Δ > 2·SE, "hurts" if Δ < −2·SE, else "no clear effect".
+
+## E2 ranked results (sampled, 1M)
+
+| rank | variant | deliveries | collisions |
+|---|---|---|---|
+| 1 | coll_0.3 | 61.79 ± 2.74 | 99.31 ± 11.22 |
+| 2 | ent_0.01 | 61.73 ± 3.62 | 130.86 ± 24.58 |
+| 3 | gamma_0.995 | 57.67 ± 5.01 | 166.84 ± 36.00 |
+| 4 | base | 56.65 ± 4.25 | 173.96 ± 23.39 |
+| 5 | shape_0.05 | 55.25 ± 3.34 | 188.41 ± 21.33 |
+| 6 | shape_0 | 54.74 ± 2.50 | 185.03 ± 19.81 |
+| 7 | gamma_0.95 | 53.20 ± 1.95 | 197.55 ± 8.36 |
+| 8 | shape_0.1 | 51.83 ± 4.24 | 209.15 ± 23.26 |
+| 9 | net_128 | 49.73 ± 8.06 | 210.13 ± 41.16 |
+| 10 | coll_1.0 | 46.66 ± 7.05 | 40.06 ± 9.34 |
+
+## E2 verdicts versus `base` (deliveries primary)
+
+| variant | Δ deliveries | SE | Δ/SE | verdict | Δ collisions |
+|---|---|---|---|---|---|
+| ent_0.01 | +5.08 | 2.50 | 2.03 | helps (tentative, at the threshold) | -43.1 |
+| coll_0.3 | +5.14 | 2.26 | 2.27 | helps (tentative, barely over threshold) | -74.7 |
+| coll_1.0 | -9.99 | 3.68 | -2.71 | hurts | -133.9 |
+| shape_0 | -1.91 | 2.21 | -0.87 | no clear effect | +11.1 |
+| shape_0.05 | -1.40 | 2.42 | -0.58 | no clear effect | +14.4 |
+| shape_0.1 | -4.82 | 2.68 | -1.80 | no clear effect | +35.2 |
+| gamma_0.95 | -3.45 | 2.09 | -1.65 | no clear effect | +23.6 |
+| gamma_0.995 | +1.02 | 2.94 | 0.35 | no clear effect | -7.1 |
+| net_128 | -6.92 | 4.07 | -1.70 | no clear effect | +36.2 |
+
+## E2 interpretation and caveats
+
+- Honest reading: with n=5 and seed std of 2 to 8 deliveries, only differences of roughly 5 to 6 deliveries are detectable. Nine comparisons at 2·SE (about a 5% two-sided rate each if there were no real effects) will produce roughly 0.5 false positives on average; the two "helps" verdicts (Δ/SE 2.03 and 2.27) are barely over the line and should be treated as tentative candidates for a follow-up with more seeds, not as established wins. `coll_1.0` "hurts" is further out (2.71) and also visibly larger in the per-seed scatter, but is still a 5-seed result.
+- The three `shape_*` variants and `gamma_*`/`net_128` show no clear effect on deliveries. Several point estimates are negative (`shape_0.1`, `net_128`, `gamma_0.95` at about -1.7 to -1.8 SE); that is suggestive at most. `net_128` has the largest seed spread (std 8.06; seeds 42.7 to 60.8).
+- Collisions (evaluation counts raw collisions): the collision differences are larger relative to their spread than the delivery differences. A lower collision penalty magnitude is not what was tested; `coll_0.3` (a harsher training penalty than the -0.1 default) cut collisions by about 75 (174 to 99) while delivering as many or more; `coll_1.0` cut collisions to 40 (close to random's 13) but delivered about 10 fewer. `ent_0.01` also lowered collisions (-43). The scatter (`tradeoff.png`) shows the collision-heavy variants forming one deliveries-versus-collisions curve (more collisions, fewer deliveries) with `coll_1.0` at its low-collision end. I did not run a significance rule on collisions; these are descriptive.
+- Hypotheses (not tested): a stronger collision penalty may teach the policy to avoid contact up to a point, beyond which it avoids moving; higher entropy may help exploration. Neither mechanism was investigated.
+- `base` here scores 56.65 ± 4.25 at 1M, consistent with E1's 53.94 ± 5.50 at 1M (different training seeds and eval block, so unpaired).
+- Deterministic evaluation was also recorded and again collapses (about 12 deliveries for most variants; `coll_1.0` only 6.0); not used for any verdict.
+- Learning-curve figures: with ten variants the curves are crowded and the colour cycle repeats (base and gamma_0.995 are both blue, ent_0.01 and net_128 both orange, shape_0 and coll_0.3 both green, shape_0.05 and coll_1.0 both red), so individual lines cannot be told apart from the legend; only the outlying `coll_1.0` (slow start) and the collision-curve extremes (`coll_1.0`, `coll_0.3`) are identifiable. The bar chart and tradeoff scatter are the readable figures (the scatter also reuses colours).
+
+Figures: `e2/variant_comparison.png`, `e2/tradeoff.png`.
