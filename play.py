@@ -5,12 +5,13 @@ Run `python play.py --help` for the flags.
 """
 
 import argparse
+from collections.abc import Callable
 
 import numpy as np
 import pygame
 from python_ta.contracts import check_contracts
 
-from multi_agent_warehouse.agents import POLICIES, Policy
+from multi_agent_warehouse.agents import Policy, available_policies
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS, MAX_ROBOTS, RENDER_FPS
 from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 
@@ -22,6 +23,7 @@ class Demo:
     """A window that steps one policy through endless episodes and reacts to key presses.
 
     Attributes:
+        _policies: The policies that can run, by name.
         _policy_names: The names of every policy the P key cycles through.
         _policy_name: The name of the policy that is running.
         _policy: The running policy.
@@ -35,6 +37,7 @@ class Demo:
         - self._seed >= 0
     """
 
+    _policies: dict[str, Callable[[], Policy]]
     _policy_names: list[str]
     _policy_name: str
     _policy: Policy
@@ -47,14 +50,15 @@ class Demo:
         """Open the env for `n_robots` at `fps` and start the first episode with `seed`.
 
         Preconditions:
-            - policy_name in POLICIES
+            - policy_name in available_policies()
             - 1 <= n_robots <= MAX_ROBOTS
             - seed >= 0
             - fps > 0
         """
-        self._policy_names = list(POLICIES)
+        self._policies = available_policies()
+        self._policy_names = list(self._policies)
         self._policy_name = policy_name
-        self._policy = POLICIES[policy_name]()
+        self._policy = self._policies[policy_name]()
         self._env = MultiAgentWarehouseEnv(n_robots=n_robots, render_mode="human", render_fps=fps)
         self._seed = seed
         self._paused = False
@@ -121,7 +125,7 @@ class Demo:
         """Switch to the next policy and seed it for the running episode."""
         index = self._policy_names.index(self._policy_name)
         self._policy_name = self._policy_names[(index + 1) % len(self._policy_names)]
-        self._policy = POLICIES[self._policy_name]()
+        self._policy = self._policies[self._policy_name]()
         self._policy.reset(self._seed)
 
     def _render(self) -> None:
@@ -135,7 +139,7 @@ class Demo:
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Read the command line, exiting with a usage error on a bad value."""
     parser = argparse.ArgumentParser(description="Watch a policy run the warehouse.")
-    parser.add_argument("--policy", choices=list(POLICIES), default=DEFAULT_POLICY)
+    parser.add_argument("--policy", choices=["random", "greedy", "rl"], default=DEFAULT_POLICY)
     parser.add_argument("--robots", type=int, default=DEFAULT_N_ROBOTS)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--fps", type=int, default=RENDER_FPS)
@@ -150,6 +154,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     """Run the demo with the command-line settings."""
     args = parse_args(argv)
+    if args.policy not in available_policies():
+        print(f"policy '{args.policy}' is unavailable (no trained model); using {DEFAULT_POLICY}")
+        args.policy = DEFAULT_POLICY
     Demo(args.policy, args.robots, args.seed, args.fps).run(args.frames)
 
 

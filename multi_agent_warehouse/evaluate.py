@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 from python_ta.contracts import check_contracts
 
-from multi_agent_warehouse.agents import POLICIES, Policy
+from multi_agent_warehouse.agents import Policy, available_policies
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS
 from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 
@@ -53,7 +53,7 @@ def evaluate(
 def main() -> None:
     """Print a fixed-width table with one row per available policy."""
     print(f"{'policy':<10}{'deliveries/episode':>20}{'collisions/episode':>20}")
-    for name, make_policy in POLICIES.items():
+    for name, make_policy in available_policies().items():
         result = evaluate(make_policy)
         print(f"{name:<10}{result['deliveries']:>20.2f}{result['collisions']:>20.2f}")
 
