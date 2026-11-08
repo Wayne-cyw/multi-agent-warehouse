@@ -12,7 +12,8 @@ from typing import Any
 import numpy as np
 from python_ta.contracts import check_contracts
 
-from multi_agent_warehouse.agents import Policy, available_policies
+from multi_agent_warehouse import agents
+from multi_agent_warehouse.agents import Policy, available_policies, policy_env_kwargs
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS
 from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 
@@ -126,7 +127,8 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{args.episodes} episodes per policy, seeds from 1000, mean +/- 95% CI")
     print(f"{'policy':<10}{'deliveries/episode':>24}{'collisions/episode':>24}")
     for name, make_policy in available_policies().items():
-        stats = evaluate_with_ci(make_policy, args.episodes)
+        kwargs = policy_env_kwargs(agents.MODEL_PATH) if name == "rl" else None
+        stats = evaluate_with_ci(make_policy, args.episodes, env_kwargs=kwargs)
         cells = [f"{mean:.2f} +/- {half:.2f}" for mean, half in stats.values()]
         print(f"{name:<10}{cells[0]:>24}{cells[1]:>24}")
 

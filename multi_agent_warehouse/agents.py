@@ -5,6 +5,7 @@ Every policy has the same two methods, so the demo and the evaluation share one 
 """
 
 import importlib.util
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
@@ -227,6 +228,28 @@ class RLPolicy(Policy):
         return {agent: int(action) for agent, action in zip(agents, actions, strict=True)}
 
 
+def _sidecar(model_path: str | Path) -> dict[str, Any]:
+    """The JSON next to `model_path` (same name, `.json`), or an empty dict when there is none."""
+    path = Path(model_path).with_suffix(".json")
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def policy_env_kwargs(model_path: str | Path) -> dict[str, Any]:
+    """The env keyword arguments the model at `model_path` was trained with.
+
+    They come from the model's sidecar, `<name>.json` beside `<name>.zip`, which is a training
+    config; the result is empty when there is no sidecar, as for the original model.
+    """
+    return dict(_sidecar(model_path).get("env_kwargs", {}))
+
+
+def policy_algo(model_path: str | Path) -> str:
+    """The algorithm of the model at `model_path` from its sidecar, "ppo" when there is none."""
+    return str(_sidecar(model_path).get("algo", "ppo"))
+
+
 POLICIES: dict[str, Callable[[], Policy]] = {
     "random": RandomPolicy,
     "greedy": GreedyPolicy,
@@ -234,8 +257,11 @@ POLICIES: dict[str, Callable[[], Policy]] = {
 
 
 def available_policies() -> dict[str, Callable[[], Policy]]:
-    """`POLICIES`, plus `rl` when the model file exists and Stable-Baselines3 is installed."""
+    """`POLICIES`, plus `rl` when the model file exists and Stable-Baselines3 is installed.
+
+    The `rl` policy is built with the algorithm recorded in the model's sidecar.
+    """
     policies = dict(POLICIES)
     if MODEL_PATH.exists() and importlib.util.find_spec("stable_baselines3") is not None:
-        policies["rl"] = lambda: RLPolicy(MODEL_PATH)
+        policies["rl"] = lambda: RLPolicy(MODEL_PATH, algo=policy_algo(MODEL_PATH))
     return policies

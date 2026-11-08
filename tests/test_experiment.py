@@ -416,3 +416,86 @@ def test_fixed_and_rand_variants():
     rand = experiment.VARIANTS["rand"]
     assert rand.env_kwargs == {"layouts": TRAIN_LAYOUTS}
     assert rand.robot_counts == (2, 3, 4, 5)
+
+
+def test_tuned_variant_combines_the_winning_changes():
+    tuned = experiment.VARIANTS["tuned"]
+    rich_lstm = experiment.VARIANTS["rich_lstm"]
+
+    assert tuned.algo == "recurrent_ppo"
+    assert tuned.env_kwargs == {"observation": "rich", "collision_penalty": -0.3}
+    assert tuned.ent_coef == 0.01
+    assert dataclasses.replace(tuned, ent_coef=0.0, env_kwargs=rich_lstm.env_kwargs) == rich_lstm
+
+
+def _blocks(result):
+    n = result["n_episodes"]
+    return (
+        range(result["validation_base"], result["validation_base"] + n),
+        range(result["test_base"], result["test_base"] + n),
+    )
+
+
+def test_select_and_test_blocks_are_disjoint(finished):
+    result = experiment.select_and_test(finished, "legacy", baseline=None, n_episodes=2)
+
+    manifest = _manifest(finished)
+    base = manifest["eval_seed_base"]
+    eval_block = range(base, base + manifest["n_eval_episodes"])
+    validation, test = _blocks(result)
+    assert not set(validation) & set(test)
+    for block in (validation, test):
+        assert not set(block) & set(eval_block)
+        assert not set(block) & set(manifest["train_seeds"])
+        assert min(block) >= 10_000
+
+
+def test_draw_blocks_redraws_overlapping_blocks(monkeypatch):
+    draws = iter([100, 105, 200, 205, 300])
+    monkeypatch.setattr(experiment, "draw_eval_base", lambda n: next(draws))
+
+    first, second = experiment._draw_blocks(10, [range(103, 110)])
+
+    assert (first, second) == (200, 300)
+
+
+def test_select_and_test_reports_the_selected_seed_on_the_test_block(finished):
+    result = experiment.select_and_test(finished, "legacy", baseline=None, n_episodes=2)
+
+    rows = _rows(finished / "final.csv")
+    chosen = [row for row in rows if row["selected"] == "True"]
+    assert len(chosen) == 1
+    assert int(chosen[0]["seed"]) == result["selected_seed"]
+    best = max(rows, key=lambda row: float(row["validation_deliveries"]))
+    assert best is chosen[0] or float(best["validation_deliveries"]) == float(
+        chosen[0]["validation_deliveries"]
+    )
+    _, test = _blocks(result)
+    expected = summarise(
+        evaluate_episodes(
+            lambda: experiment.RLPolicy(result["final_path"]),
+            test,
+            env_kwargs=experiment.VARIANTS["legacy"].env_kwargs,
+        )
+    )
+    assert result["test"]["deliveries"] == pytest.approx(expected["deliveries"][0])
+    assert float(chosen[0]["test_deliveries"]) == pytest.approx(expected["deliveries"][0])
+    assert result["replace"] is False
+
+
+def test_select_and_test_scores_the_committed_model_and_applies_the_rule(finished, tmp_path):
+    seed = _manifest(finished)["train_seeds"][0]
+    model = tmp_path / "old.zip"
+    shutil.copy(finished / "legacy" / f"seed_{seed}" / "final.zip", model)
+
+    result = experiment.select_and_test(
+        finished, "legacy", baseline="legacy", committed=model, n_episodes=2
+    )
+
+    assert result["committed"] is not None
+    assert result["baseline_mean"] is not None
+    assert any(row["variant"] == "committed" for row in _rows(finished / "final.csv"))
+    gain = result["test"]["deliveries"] - max(
+        result["baseline_mean"], result["committed"]["deliveries"]
+    )
+    assert result["replace"] == (gain > result["seed_spread"])

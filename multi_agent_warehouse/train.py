@@ -240,10 +240,11 @@ def _checkpoint_callback(steps: tuple[int, ...], directory: Path) -> Any:
 def fit(cfg: TrainConfig, out: Path, log_dir: Path | None = None, verbose: int = 0) -> Path:
     """Train an agent as `cfg` describes, save it to `out` and return the saved zip's path.
 
-    With `log_dir`, also write `progress.csv`, `config.json` and `checkpoints/step_<n:09d>.zip`
-    there. Both algorithms bootstrap time-limit truncations from the value function unless
-    `cfg.bootstrap_truncation` is off; `RecurrentPPO` evaluates the terminal observation with that
-    sub-environment's current critic LSTM state.
+    The config is also written beside the model as its sidecar, `<out>.json`, so a loader can
+    rebuild the environment and the policy class. With `log_dir`, also write `progress.csv`,
+    `config.json` and `checkpoints/step_<n:09d>.zip` there. Both algorithms bootstrap time-limit
+    truncations from the value function unless `cfg.bootstrap_truncation` is off; `RecurrentPPO`
+    evaluates the terminal observation with that sub-environment's current critic LSTM state.
     """
     from stable_baselines3.common.logger import configure
 
@@ -276,6 +277,8 @@ def fit(cfg: TrainConfig, out: Path, log_dir: Path | None = None, verbose: int =
         model.learn(cfg.total_steps, callback=callback)
         out.parent.mkdir(parents=True, exist_ok=True)
         model.save(out)
+        sidecar = out.with_suffix(".zip").with_suffix(".json")
+        sidecar.write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
     finally:
         vec_env.close()
     return out.with_suffix(".zip")

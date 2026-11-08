@@ -18,6 +18,7 @@ import json
 import os
 import platform
 import shutil
+import statistics
 import subprocess
 from collections.abc import Iterator, Sequence
 from datetime import datetime, timezone
@@ -25,7 +26,13 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
-from multi_agent_warehouse.agents import GreedyPolicy, RandomPolicy, RLPolicy
+from multi_agent_warehouse.agents import (
+    GreedyPolicy,
+    RandomPolicy,
+    RLPolicy,
+    policy_algo,
+    policy_env_kwargs,
+)
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS, TRAIN_LAYOUTS
 from multi_agent_warehouse.evaluate import evaluate_episodes, summarise
 from multi_agent_warehouse.seeds import draw_eval_base, draw_seeds
@@ -74,6 +81,11 @@ VARIANTS.update(
             _BASE, algo="recurrent_ppo", env_kwargs={"observation": "rich"}
         ),
     }
+)
+VARIANTS["tuned"] = dataclasses.replace(
+    VARIANTS["rich_lstm"],
+    ent_coef=VARIANTS["ent_0.01"].ent_coef,
+    env_kwargs={**VARIANTS["rich_lstm"].env_kwargs, **VARIANTS["coll_0.3"].env_kwargs},
 )
 
 MODES = ("sampled", "deterministic")
@@ -451,6 +463,151 @@ def _stat_cells_of(row: dict) -> dict[str, str]:
     return {key: repr(row[key]) for key in keys}
 
 
+FINAL_COLUMNS = (
+    "variant",
+    "seed",
+    "selected",
+    "validation_deliveries",
+    "test_deliveries",
+    "test_ci_deliveries",
+    "test_collisions",
+)
+
+
+def _draw_blocks(n_episodes: int, avoid: Sequence[range]) -> tuple[int, int]:
+    """Draw the first seeds of two disjoint random blocks of `n_episodes` that avoid `avoid`."""
+    blocks: list[range] = list(avoid)
+    bases = []
+    while len(bases) < 2:
+        base = draw_eval_base(n_episodes)
+        block = range(base, base + n_episodes)
+        if all(block.start >= other.stop or other.start >= block.stop for other in blocks):
+            blocks.append(block)
+            bases.append(base)
+    return bases[0], bases[1]
+
+
+def _score(model_path: Path, algo: str, env_kwargs: dict, seeds: range) -> dict[str, float]:
+    """Mean and CI half-width of deliveries and the mean collisions of a sampled model."""
+    policy = RLPolicy(model_path, deterministic=False, algo=algo)
+    stats = summarise(
+        evaluate_episodes(lambda: policy, seeds, n_robots=DEFAULT_N_ROBOTS, env_kwargs=env_kwargs)
+    )
+    return {
+        "deliveries": stats["deliveries"][0],
+        "ci_deliveries": stats["deliveries"][1],
+        "collisions": stats["collisions"][0],
+    }
+
+
+def select_and_test(
+    exp_dir: Path,
+    variant: str,
+    baseline: str | None = "base",
+    committed: Path | None = None,
+    n_episodes: int = 100,
+) -> dict[str, Any]:
+    """Pick the best seed of `variant` on a validation block and score it on a fresh test block.
+
+    The validation and test blocks are random, `n_episodes` long, disjoint from each other, from
+    the manifest's evaluation block and from every training seed. The seed with the most
+    validation deliveries is selected; its test-block score is the honest estimate, because no
+    choice was made on that block. Every seed of `variant` and `baseline`, and the `committed`
+    model if given, is also scored on the test block, and `final.csv` in `exp_dir` lists them all.
+
+    The result has `selected_seed`, `final_path`, the block bases, `test` (the selected seed's
+    scores), `seed_spread` (std over the variant's seeds' test deliveries), `baseline_mean`,
+    `committed` and `replace`: whether the selected seed beats both the baseline's mean and the
+    committed model by more than the seed spread (False when either is missing).
+
+    Preconditions:
+        - n_episodes >= 1
+    """
+    exp_dir = Path(exp_dir)
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    eval_base = manifest["eval_seed_base"]
+    avoid = [
+        range(eval_base, eval_base + manifest["n_eval_episodes"]),
+        range(0, 1000),
+        *(range(int(s), int(s) + 1) for s in manifest["train_seeds"]),
+    ]
+    val_base, test_base = _draw_blocks(n_episodes, avoid)
+    val_seeds = range(val_base, val_base + n_episodes)
+    test_seeds = range(test_base, test_base + n_episodes)
+
+    rows: list[dict[str, Any]] = []
+    scores: dict[str, dict[int, dict[str, float]]] = {}
+    for name in [variant, *([baseline] if baseline else [])]:
+        cfg = TrainConfig.from_dict(manifest["variants"][name])
+        scores[name] = {}
+        for seed in manifest["train_seeds"]:
+            final = exp_dir / name / f"seed_{seed}" / "final.zip"
+            val = _score(final, cfg.algo, cfg.env_kwargs, val_seeds)
+            test = _score(final, cfg.algo, cfg.env_kwargs, test_seeds)
+            scores[name][seed] = {"validation": val["deliveries"], **test}
+            rows.append(
+                {
+                    "variant": name,
+                    "seed": seed,
+                    "selected": False,
+                    "validation_deliveries": repr(val["deliveries"]),
+                    "test_deliveries": repr(test["deliveries"]),
+                    "test_ci_deliveries": repr(test["ci_deliveries"]),
+                    "test_collisions": repr(test["collisions"]),
+                }
+            )
+    own = scores[variant]
+    selected = max(own, key=lambda seed: own[seed]["validation"])
+    for row in rows:
+        row["selected"] = (row["variant"], row["seed"]) == (variant, selected)
+
+    committed_score = None
+    if committed is not None:
+        committed_score = _score(
+            Path(committed), policy_algo(committed), policy_env_kwargs(committed), test_seeds
+        )
+        rows.append(
+            {
+                "variant": "committed",
+                "seed": "",
+                "selected": False,
+                "validation_deliveries": "",
+                "test_deliveries": repr(committed_score["deliveries"]),
+                "test_ci_deliveries": repr(committed_score["ci_deliveries"]),
+                "test_collisions": repr(committed_score["collisions"]),
+            }
+        )
+    with open(exp_dir / "final.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FINAL_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    spread = statistics.stdev(v["deliveries"] for v in own.values()) if len(own) > 1 else 0.0
+    chosen = own[selected]["deliveries"]
+    baseline_mean = (
+        statistics.fmean(v["deliveries"] for v in scores[baseline].values()) if baseline else None
+    )
+    replace = (
+        baseline_mean is not None
+        and committed_score is not None
+        and chosen - baseline_mean > spread
+        and chosen - committed_score["deliveries"] > spread
+    )
+    return {
+        "variant": variant,
+        "selected_seed": selected,
+        "final_path": exp_dir / variant / f"seed_{selected}" / "final.zip",
+        "validation_base": val_base,
+        "test_base": test_base,
+        "n_episodes": n_episodes,
+        "test": own[selected],
+        "seed_spread": spread,
+        "baseline_mean": baseline_mean,
+        "committed": committed_score,
+        "replace": bool(replace),
+    }
+
+
 def _int_list(text: str) -> list[int]:
     """Parse a comma-separated list of integers such as "1,2,3"."""
     return [int(part) for part in text.split(",") if part.strip()]
@@ -474,6 +631,12 @@ def main(argv: list[str] | None = None) -> None:
     gen.add_argument("--robot-counts", type=_int_list, default=[2, 3, 4, 5, 6])
     gen.add_argument("--episodes", type=int, default=100)
     gen.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
+    sel = commands.add_parser("select", help="pick a seed on validation, score it on a test block")
+    sel.add_argument("--name", required=True)
+    sel.add_argument("--variant", required=True)
+    sel.add_argument("--baseline", default="base")
+    sel.add_argument("--committed", type=Path, default=None, help="model zip to compare against")
+    sel.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
     plot = commands.add_parser("plot", help="write figures and report.md for an experiment")
     plot.add_argument("--name", required=True)
     plot.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
@@ -488,6 +651,11 @@ def main(argv: list[str] | None = None) -> None:
                 args.out_root / args.name, variant, layouts, args.robot_counts, args.episodes
             )
             print(f"evaluated {variant}")
+    elif args.command == "select":
+        result = select_and_test(
+            args.out_root / args.name, args.variant, args.baseline, args.committed
+        )
+        print(json.dumps(result, indent=2, default=str))
     elif args.command == "plot":
         from multi_agent_warehouse.plots import plot_all
 

@@ -432,3 +432,34 @@ def test_recurrent_ppo_without_sb3_contrib_names_the_rl_extra(monkeypatch):
 
     with pytest.raises(ImportError, match="rl"):
         model_class("recurrent_ppo")
+
+
+def test_policy_env_kwargs_reads_sidecar(tmp_path):
+    import json
+
+    from multi_agent_warehouse.agents import policy_algo, policy_env_kwargs
+
+    model = tmp_path / "m.zip"
+    (tmp_path / "m.json").write_text(
+        json.dumps({"algo": "recurrent_ppo", "env_kwargs": {"observation": "rich"}})
+    )
+
+    assert policy_env_kwargs(model) == {"observation": "rich"}
+    assert policy_algo(model) == "recurrent_ppo"
+
+
+def test_policy_env_kwargs_defaults_without_sidecar(tmp_path):
+    from multi_agent_warehouse.agents import policy_algo, policy_env_kwargs
+
+    assert policy_env_kwargs(tmp_path / "none.zip") == {}
+    assert policy_algo(tmp_path / "none.zip") == "ppo"
+
+
+def test_fit_writes_a_sidecar_next_to_the_model(tmp_path):
+    from multi_agent_warehouse.agents import policy_env_kwargs
+    from multi_agent_warehouse.train import TrainConfig, fit
+
+    cfg = TrainConfig(total_steps=512, n_envs=2, env_kwargs={"observation": "rich"})
+    path = fit(cfg, tmp_path / "m")
+
+    assert policy_env_kwargs(path) == {"observation": "rich"}
