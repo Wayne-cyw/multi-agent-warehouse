@@ -4,8 +4,11 @@ Every policy has the same two methods, so the demo and the evaluation share one 
 `reset(seed)` starts an episode and `act(observations)` returns one action per robot.
 """
 
+import importlib.util
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 from python_ta.contracts import check_contracts
@@ -14,6 +17,8 @@ from multi_agent_warehouse.rules import ACTION_DELTAS, DOWN, LEFT, RIGHT, STAY, 
 
 # Observation layout: [row, col, dr, dc, up_blocked, down_blocked, left_blocked, right_blocked].
 _DR, _DC, _BLOCKED = 2, 3, 4
+
+MODEL_PATH = Path("models/ppo_multi_agent_warehouse.zip")
 
 
 @check_contracts
@@ -125,7 +130,63 @@ def _is_blocked(obs: np.ndarray, action: int) -> bool:
     return bool(obs[_BLOCKED + action - 1])
 
 
+@check_contracts
+class RLPolicy(Policy):
+    """A trained PPO network shared by every robot, sampling its actions like it did in training.
+
+    Stable-Baselines3 comes from the optional `rl` extra, so it is imported only when a model is
+    loaded.
+
+    Attributes:
+        _model: The loaded Stable-Baselines3 PPO model.
+
+    Representation Invariants:
+        - self._rng is not None
+    """
+
+    _model: Any
+
+    def __init__(self, model_path: str | Path = MODEL_PATH) -> None:
+        """Load the model saved at `model_path`."""
+        super().__init__()
+        from stable_baselines3 import PPO
+
+        self._model = PPO.load(model_path, device="cpu")
+
+    def reset(self, seed: int | None = None) -> None:
+        """Start an episode; a seed also fixes the network's sampling, so the episode repeats.
+
+        Preconditions:
+            - seed is None or seed >= 0
+        """
+        super().reset(seed)
+        if seed is not None:
+            # SB3 samples actions through torch's global generator, so that is the one to seed.
+            import torch
+
+            torch.manual_seed(seed)
+
+    def act(self, observations: dict[str, np.ndarray]) -> dict[str, int]:
+        """One sampled action per robot from a single batched forward pass, in sorted id order.
+
+        Preconditions:
+            - all(len(obs) == 8 for obs in observations.values())
+        """
+        agents = sorted(observations)
+        batch = np.stack([observations[agent] for agent in agents])
+        actions, _ = self._model.predict(batch, deterministic=False)
+        return {agent: int(action) for agent, action in zip(agents, actions, strict=True)}
+
+
 POLICIES: dict[str, Callable[[], Policy]] = {
     "random": RandomPolicy,
     "greedy": GreedyPolicy,
 }
+
+
+def available_policies() -> dict[str, Callable[[], Policy]]:
+    """`POLICIES`, plus `rl` when the model file exists and Stable-Baselines3 is installed."""
+    policies = dict(POLICIES)
+    if MODEL_PATH.exists() and importlib.util.find_spec("stable_baselines3") is not None:
+        policies["rl"] = lambda: RLPolicy(MODEL_PATH)
+    return policies

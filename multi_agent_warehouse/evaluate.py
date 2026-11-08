@@ -11,7 +11,7 @@ from collections.abc import Callable
 import numpy as np
 from python_ta.contracts import check_contracts
 
-from multi_agent_warehouse.agents import POLICIES, Policy
+from multi_agent_warehouse.agents import Policy, available_policies
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS
 from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 
@@ -82,14 +82,14 @@ def evaluate(
 
 def main(argv: list[str] | None = None) -> None:
     """Print a fixed-width table with one row per available policy."""
-    parser = argparse.ArgumentParser(description="Seeded evaluation of the scripted policies.")
+    parser = argparse.ArgumentParser(description="Seeded evaluation of every available policy.")
     parser.add_argument(
         "--episodes", type=int, default=DEFAULT_EPISODES, help="episodes per policy"
     )
     args = parser.parse_args(argv)
     print(f"{args.episodes} episodes per policy, seeds from 1000, mean +/- 95% CI")
     print(f"{'policy':<10}{'deliveries/episode':>24}{'collisions/episode':>24}")
-    for name, make_policy in POLICIES.items():
+    for name, make_policy in available_policies().items():
         stats = evaluate_with_ci(make_policy, args.episodes)
         cells = [f"{mean:.2f} +/- {half:.2f}" for mean, half in stats.values()]
         print(f"{name:<10}{cells[0]:>24}{cells[1]:>24}")

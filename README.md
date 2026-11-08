@@ -40,12 +40,27 @@ Mean per episode (± 95% confidence interval) over 100 fixed seeds (1000 to 1099
 |--------|---------------------:|---------------------:|
 | random |        2.63 ± 0.34   |        12.80 ± 1.49  |
 | greedy |       12.67 ± 2.07   |       401.30 ± 24.24 |
+| rl (PPO) |     51.07 ± 3.27   |       189.95 ± 20.65 |
 
 Greedy delivers about 4.8x more than random, but its collision count is the interesting number. A
 collision is counted per robot per step, so 200 steps with 3 robots allows at most 600. A value of
 roughly 400 suggests that greedy robots spend much of the episode blocking each other, because the
 rule only looks at its own target and its four neighbours. That is exactly the failure that
 coordination is supposed to fix, and it is the gap a learned policy should be measured against.
+
+## The learned policy
+
+One PPO network, shared by all robots through SuperSuit parameter sharing, trained with shaping on:
+
+```bash
+pip install -e ".[rl]"
+python -m multi_agent_warehouse.train   # 300,000 steps, 8 envs, seed 0, n_steps 128, batch 256
+```
+
+The committed model (`models/ppo_multi_agent_warehouse.zip`) used those defaults and the default
+`SHAPING_SCALE` of 0.02. PPO delivers about 4.0x more than greedy and about 19x more than random, and
+it collides less than greedy, though still far more than random. This was tested on one layout,
+with 3 robots and one training seed, so it says nothing about generalisation.
 
 ## The environment
 
@@ -72,7 +87,7 @@ config.py   layout + every tunable number (the only place settings live)
 rules.py    resolve_moves(): pure function, no env state
 env.py      MultiAgentWarehouseEnv: ParallelEnv built on rules + config
 render.py   Renderer: always draws offscreen, returns an RGB array; "human" also blits to a window
-agents.py   Policy protocol (reset, act) + RandomPolicy, GreedyPolicy
+agents.py   Policy protocol (reset, act) + RandomPolicy, GreedyPolicy, RLPolicy
 evaluate.py seeded evaluation table
 play.py     live demo with keyboard controls
 ```
@@ -131,7 +146,7 @@ pip install -e ".[dev]"
 ```bash
 python play.py                              # live demo (space pause, R reset, P switch policy, Q quit)
 python play.py --policy random --robots 4   # other policy, more robots
-python -m multi_agent_warehouse.evaluate    # reproduce the table above (--episodes N to change the sample size)
+python -m multi_agent_warehouse.evaluate    # reproduce the table above (--episodes N to change the sample size; the rl row needs the model)
 pytest                                      # run the tests
 ```
 
@@ -163,7 +178,7 @@ multi-agent-warehouse/
 - [x] Environment, rules and rewards
 - [x] Pygame renderer and live demo
 - [x] Random and greedy baselines with a seeded evaluation
-- [ ] Train PPO (Stable-Baselines3) with parameter sharing through SuperSuit, using shaping during training only
-- [ ] Compare the learned policy against both baselines, and report honestly where it lands
+- [x] Train PPO (Stable-Baselines3) with parameter sharing through SuperSuit, using shaping during training only
+- [x] Compare the learned policy against both baselines, and report honestly where it lands
 - [ ] Reduce greedy's deadlocks, or show that learning does
 - [ ] Generalise across layouts, one level at a time
