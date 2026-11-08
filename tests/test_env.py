@@ -7,7 +7,7 @@ from pettingzoo.test import parallel_api_test
 
 from multi_agent_warehouse import MultiAgentWarehouseEnv
 from multi_agent_warehouse.agents import GreedyPolicy, RandomPolicy
-from multi_agent_warehouse.config import LAYOUT
+from multi_agent_warehouse.config import LAYOUT, LAYOUTS
 from multi_agent_warehouse.evaluate import run_episode
 from multi_agent_warehouse.rules import DOWN, RIGHT, STAY, UP
 
@@ -368,3 +368,43 @@ def test_default_observation_is_basic_and_unchanged():
         np.testing.assert_array_equal(obs[agent], explicit_obs[agent])
     pinned = run_episode(MultiAgentWarehouseEnv(observation="basic"), GreedyPolicy(), 1000)
     assert pinned == PINNED_GREEDY
+
+
+def test_multi_layout_env_uses_every_layout_across_seeds():
+    env = MultiAgentWarehouseEnv(layouts=("default", "open", "aisles", "scatter"))
+    seen = set()
+    for seed in range(40):
+        env.reset(seed=seed)
+        seen.add(env.layout)
+        assert env.shelves.tolist() == [[ch == "#" for ch in row] for row in LAYOUTS[env.layout]]
+        assert all(not env.shelves[cell] for cell in env.positions.values())
+        assert all(not env.shelves[cell] for cell in env.targets.values())
+    assert seen == {"default", "open", "aisles", "scatter"}
+
+
+def test_single_layout_env_ignores_the_layouts_machinery_in_its_rng_stream():
+    plain = MultiAgentWarehouseEnv()
+    named = MultiAgentWarehouseEnv(layouts=("default",))
+    plain.reset(seed=7)
+    named.reset(seed=7)
+    assert plain.positions == named.positions and plain.targets == named.targets
+
+
+def test_unknown_layout_is_rejected():
+    with pytest.raises(ValueError):
+        MultiAgentWarehouseEnv(layouts=("nope",))
+    with pytest.raises(ValueError):
+        MultiAgentWarehouseEnv(layouts=())
+
+
+def test_renderer_follows_the_active_layout():
+    env = MultiAgentWarehouseEnv(layouts=("default", "open"), render_mode="rgb_array")
+    try:
+        for seed in range(10):
+            env.reset(seed=seed)
+            env.render()
+            assert env._renderer.shelves.tolist() == [
+                [ch == "#" for ch in row] for row in LAYOUTS[env.layout]
+            ]
+    finally:
+        env.close()

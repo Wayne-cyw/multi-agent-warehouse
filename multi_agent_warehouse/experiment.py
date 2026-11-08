@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_warehouse.agents import GreedyPolicy, RandomPolicy, RLPolicy
-from multi_agent_warehouse.config import DEFAULT_N_ROBOTS
+from multi_agent_warehouse.config import DEFAULT_N_ROBOTS, TRAIN_LAYOUTS
 from multi_agent_warehouse.evaluate import evaluate_episodes, summarise
 from multi_agent_warehouse.seeds import draw_eval_base, draw_seeds
 from multi_agent_warehouse.train import TrainConfig, fit, model_class
@@ -65,6 +65,10 @@ VARIANTS.update(
         "coll_0.3": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -0.3}),
         "coll_1.0": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -1.0}),
         "rich_obs": dataclasses.replace(_BASE, env_kwargs={"observation": "rich"}),
+        "fixed": _BASE,
+        "rand": dataclasses.replace(
+            _BASE, env_kwargs={"layouts": TRAIN_LAYOUTS}, robot_counts=(2, 3, 4, 5)
+        ),
         "lstm": dataclasses.replace(_BASE, algo="recurrent_ppo"),
         "rich_lstm": dataclasses.replace(
             _BASE, algo="recurrent_ppo", env_kwargs={"observation": "rich"}
@@ -83,6 +87,16 @@ CURVE_COLUMNS = (
     "mean_collisions",
     "ci_collisions",
     "n_episodes",
+)
+GENERALISATION_COLUMNS = (
+    "variant",
+    "seed",
+    "layout",
+    "n_robots",
+    "mean_deliveries",
+    "ci_deliveries",
+    "mean_collisions",
+    "ci_collisions",
 )
 BASELINE_COLUMNS = (
     "policy",
@@ -376,6 +390,67 @@ def run_experiment(
     return directory
 
 
+def evaluate_generalisation(
+    exp_dir: Path,
+    variant: str,
+    layouts: Sequence[str],
+    robot_counts: Sequence[int],
+    n_episodes: int,
+) -> list[dict]:
+    """Evaluate every finished seed of `variant` on each layout and robot count.
+
+    Each cell uses the `n_episodes` evaluation seeds from the manifest's `eval_seed_base`, sampled
+    actions and no shaping; the variant's other `env_kwargs` apply but its `layouts` do not. The
+    variant's rows in `generalisation.csv` are replaced, other variants' are kept. Returns the new
+    rows with the `GENERALISATION_COLUMNS` keys.
+
+    Preconditions:
+        - n_episodes >= 1
+        - len(layouts) >= 1 and len(robot_counts) >= 1
+    """
+    exp_dir = Path(exp_dir)
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    template = TrainConfig.from_dict(manifest["variants"][variant])
+    base = manifest["eval_seed_base"]
+    eval_seeds = range(base, base + n_episodes)
+    rows: list[dict] = []
+    for seed in manifest["train_seeds"]:
+        final = exp_dir / variant / f"seed_{seed}" / "final.zip"
+        policy = RLPolicy(final, deterministic=False, algo=template.algo)
+        for layout in layouts:
+            kwargs = {**template.env_kwargs, "layouts": (layout,)}
+            for n_robots in robot_counts:
+                results = evaluate_episodes(
+                    lambda policy=policy: policy, eval_seeds, n_robots=n_robots, env_kwargs=kwargs
+                )
+                cells = _stat_cells(summarise(results))
+                rows.append(
+                    {
+                        "variant": variant,
+                        "seed": seed,
+                        "layout": layout,
+                        "n_robots": n_robots,
+                        **{key: float(value) for key, value in cells.items()},
+                    }
+                )
+    path = exp_dir / "generalisation.csv"
+    kept = [r for r in _read_rows(path) if r["variant"] != variant]
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=GENERALISATION_COLUMNS)
+        writer.writeheader()
+        writer.writerows(kept)
+        writer.writerows({**row, **_stat_cells_of(row)} for row in rows)
+    os.replace(tmp, path)
+    return rows
+
+
+def _stat_cells_of(row: dict) -> dict[str, str]:
+    """The four metric cells of `row` as `repr` strings, so a CSV reads back the same floats."""
+    keys = ("mean_deliveries", "ci_deliveries", "mean_collisions", "ci_collisions")
+    return {key: repr(row[key]) for key in keys}
+
+
 def _int_list(text: str) -> list[int]:
     """Parse a comma-separated list of integers such as "1,2,3"."""
     return [int(part) for part in text.split(",") if part.strip()]
@@ -392,12 +467,28 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--steps", type=int, default=None, help="override every variant's steps")
     run.add_argument("--train-seeds", type=_int_list, default=None, help="e.g. 1,2; else random")
     run.add_argument("--eval-seed-base", type=int, default=None, help="random if omitted")
+    gen = commands.add_parser("generalise", help="evaluate variants across layouts and counts")
+    gen.add_argument("--name", required=True)
+    gen.add_argument("--variants", required=True, help="comma-separated")
+    gen.add_argument("--layouts", default=None, help="comma-separated; default every layout")
+    gen.add_argument("--robot-counts", type=_int_list, default=[2, 3, 4, 5, 6])
+    gen.add_argument("--episodes", type=int, default=100)
+    gen.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
     plot = commands.add_parser("plot", help="write figures and report.md for an experiment")
     plot.add_argument("--name", required=True)
     plot.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
     args = parser.parse_args(argv)
 
-    if args.command == "plot":
+    if args.command == "generalise":
+        from multi_agent_warehouse.config import LAYOUTS
+
+        layouts = list(LAYOUTS) if args.layouts is None else args.layouts.split(",")
+        for variant in [v.strip() for v in args.variants.split(",") if v.strip()]:
+            evaluate_generalisation(
+                args.out_root / args.name, variant, layouts, args.robot_counts, args.episodes
+            )
+            print(f"evaluated {variant}")
+    elif args.command == "plot":
         from multi_agent_warehouse.plots import plot_all
 
         for path in plot_all(args.out_root / args.name):

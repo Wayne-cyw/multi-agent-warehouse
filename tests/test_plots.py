@@ -594,3 +594,53 @@ def test_comparison_bars_use_the_shared_variant_colours(tmp_path):
     for bar, name in zip(ax.patches, reversed(names), strict=True):
         expected = to_rgb(plots.variant_style(names, name)["color"])
         assert to_rgb(bar.get_facecolor()) == pytest.approx(expected, abs=1e-6)
+
+
+def _write_generalisation(exp: Path, variants=("fixed", "rand")) -> None:
+    with open(exp / "generalisation.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=experiment.GENERALISATION_COLUMNS)
+        writer.writeheader()
+        for vi, variant in enumerate(variants):
+            for seed in (1, 2):
+                for layout in ("default", "wide_gap"):
+                    for n in (2, 3):
+                        writer.writerow(
+                            {
+                                "variant": variant,
+                                "seed": seed,
+                                "layout": layout,
+                                "n_robots": n,
+                                "mean_deliveries": 3.0 + vi + n * 0.5 + seed * 0.1,
+                                "ci_deliveries": 0.2,
+                                "mean_collisions": 1.0,
+                                "ci_collisions": 0.1,
+                            }
+                        )
+
+
+def test_plot_generalisation_writes_png(tmp_path):
+    from multi_agent_warehouse.plots_generalisation import (
+        generalisation_grid,
+        plot_generalisation,
+    )
+
+    exp = make_experiment(tmp_path)
+    _write_generalisation(exp)
+
+    out = plot_generalisation(exp, tmp_path / "g.png")
+
+    assert nonempty(out)
+    layouts, counts, grid = generalisation_grid(
+        plots._read_csv(exp / "generalisation.csv"), "fixed"
+    )
+    assert layouts == ["default", "wide_gap"] and counts == [2, 3]
+    assert grid[0, 0] == pytest.approx(3.0 + 1.0 + 0.15)
+
+
+def test_plot_all_includes_generalisation_when_present(tmp_path):
+    exp = make_experiment(tmp_path)
+    _write_generalisation(exp)
+
+    written = plots.plot_all(exp)
+
+    assert exp / "plots" / "generalisation.png" in written

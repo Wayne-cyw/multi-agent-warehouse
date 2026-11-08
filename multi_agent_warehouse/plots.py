@@ -597,6 +597,10 @@ def plot_all(exp_dir: Path) -> list[Path]:
             )
     written.append(plot_variant_comparison(exp_dir, plots / "variant_comparison.png"))
     written.append(plot_tradeoff(exp_dir, plots / "tradeoff.png"))
+    if (exp_dir / "generalisation.csv").exists():
+        from multi_agent_warehouse.plots_generalisation import plot_generalisation
+
+        written.append(plot_generalisation(exp_dir, plots / "generalisation.png"))
     return [*written, make_report(exp_dir)]
 
 

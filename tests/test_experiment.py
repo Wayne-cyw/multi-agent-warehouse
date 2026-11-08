@@ -389,3 +389,30 @@ def test_cli_run_passes_its_arguments(monkeypatch):
             "eval_seed_base": 20000,
         }
     ]
+
+
+def test_generalisation_rows_cover_layout_and_count_grid(tmp_path):
+    directory = experiment.run_experiment(
+        "gen", ["legacy"], out_root=tmp_path, **{**TINY, "n_seeds": 2}
+    )
+
+    rows = experiment.evaluate_generalisation(
+        directory, "legacy", ["default", "wide_gap"], [2, 3], n_episodes=2
+    )
+
+    seeds = _manifest(directory)["train_seeds"]
+    assert Counter((r["seed"], r["layout"], r["n_robots"]) for r in rows) == dict.fromkeys(
+        [(s, layout, n) for s in seeds for layout in ("default", "wide_gap") for n in (2, 3)], 1
+    )
+    written = _rows(directory / "generalisation.csv")
+    assert list(written[0]) == list(experiment.GENERALISATION_COLUMNS)
+    assert len(written) == len(rows)
+
+
+def test_fixed_and_rand_variants():
+    from multi_agent_warehouse.config import TRAIN_LAYOUTS
+
+    assert experiment.VARIANTS["fixed"] == experiment.VARIANTS["base"]
+    rand = experiment.VARIANTS["rand"]
+    assert rand.env_kwargs == {"layouts": TRAIN_LAYOUTS}
+    assert rand.robot_counts == (2, 3, 4, 5)

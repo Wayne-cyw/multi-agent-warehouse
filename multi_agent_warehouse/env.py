@@ -1,6 +1,6 @@
 """The multi-agent warehouse as a PettingZoo ParallelEnv.
 
-Robots move on the shelved grid from `config.LAYOUT`, each chasing its own target cell. A robot
+Robots move on a shelved grid from `config.LAYOUTS`, each chasing its own target cell. A robot
 that ends a step on its target delivers and immediately gets a new one. Rewards are individual.
 """
 
@@ -16,7 +16,7 @@ from multi_agent_warehouse.config import (
     DEFAULT_MAX_STEPS,
     DEFAULT_N_ROBOTS,
     DELIVERY_REWARD,
-    LAYOUT,
+    LAYOUTS,
     MAX_ROBOTS,
     OBS_SIZES,
     OBSERVATION_MODES,
@@ -47,7 +47,9 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         render_fps: The frame rate of the `human` window.
         possible_agents: The id of every robot, in order.
         agents: The ids of the robots in the running episode; empty when none is running.
-        shelves: A boolean grid that is True where a shelf stands.
+        layouts: The names of the layouts one of which is drawn at each reset.
+        layout: The name of the layout of the running (or last) episode.
+        shelves: A boolean grid that is True where a shelf stands in the current layout.
         height: The number of rows in the grid.
         width: The number of columns in the grid.
         positions: The cell each live robot stands on.
@@ -66,6 +68,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         - self.collision_penalty <= 0
         - self.shaping_scale >= 0
         - self.observation in OBSERVATION_MODES
+        - len(self.layouts) >= 1 and self.layout in self.layouts
         - 0 <= self.step_count <= self.max_steps
         - self.total_deliveries >= 0
         - self.total_collisions >= 0
@@ -87,6 +90,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
     render_fps: int
     possible_agents: list[str]
     agents: list[str]
+    layouts: tuple[str, ...]
+    layout: str
     shelves: np.ndarray
     height: int
     width: int
@@ -108,6 +113,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         collision_penalty: float = COLLISION_PENALTY,
         shaping_scale: float = SHAPING_SCALE,
         observation: str = "basic",
+        layouts: tuple[str, ...] = ("default",),
     ) -> None:
         """Create the env with `n_robots` robots.
 
@@ -119,6 +125,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             - collision_penalty <= 0
             - shaping_scale >= 0
             - observation in OBSERVATION_MODES
+            - len(layouts) >= 1
+            - all(name in LAYOUTS for name in layouts)
 
         Raise ValueError if a precondition is violated; python_ta cannot check the
         module constants or keyword arguments these preconditions use.
@@ -139,6 +147,10 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             raise ValueError(f"shaping_scale must be at least 0, got {shaping_scale}")
         if observation not in OBSERVATION_MODES:
             raise ValueError(f"observation must be one of {OBSERVATION_MODES}, got {observation!r}")
+        if not layouts or any(name not in LAYOUTS for name in layouts):
+            raise ValueError(
+                f"layouts must be a non-empty subset of {sorted(LAYOUTS)}, got {layouts}"
+            )
 
         self.max_steps = max_steps
         self.shaping = shaping
@@ -150,12 +162,12 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self.possible_agents = [f"robot_{i}" for i in range(n_robots)]
         self.agents = []
 
-        self.shelves = np.array([[ch == "#" for ch in row] for row in LAYOUT], dtype=bool)
-        self.height, self.width = self.shelves.shape
+        self.layouts = tuple(layouts)
+        self.layout = self.layouts[0]
+        self._free_cells: list[Cell] = []
+        self._set_layout(self.layout)
+        # Every layout is 8 by 8, so the observation scale does not depend on the layout.
         self._scale = max(self.height, self.width) - 1
-        self._free_cells: list[Cell] = [
-            (int(r), int(c)) for r, c in zip(*np.nonzero(~self.shelves), strict=True)
-        ]
 
         self.positions = {}
         self.targets = {}
@@ -202,6 +214,9 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         """
         if seed is not None:
             self._rng = np.random.default_rng(seed)
+        # Only a multi-layout env draws for the layout, so a single layout keeps the RNG stream.
+        if len(self.layouts) > 1:
+            self._set_layout(self.layouts[int(self._rng.integers(len(self.layouts)))])
         self.agents = self.possible_agents[:]
         self.step_count = 0
         self.total_deliveries = 0
@@ -284,6 +299,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             self._renderer = Renderer(
                 self.shelves, window=self.render_mode == "human", fps=self.render_fps
             )
+        # The renderer keeps its own reference, so follow a layout switch made by `reset`.
+        self._renderer.shelves = self.shelves
         hud = [
             f"step {self.step_count}",
             f"deliveries {self.total_deliveries}",
@@ -298,6 +315,19 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
+
+    def _set_layout(self, name: str) -> None:
+        """Make `name` the current layout: its shelves, size and free cells.
+
+        Preconditions:
+            - name in self.layouts
+        """
+        self.layout = name
+        self.shelves = np.array([[ch == "#" for ch in row] for row in LAYOUTS[name]], dtype=bool)
+        self.height, self.width = self.shelves.shape
+        self._free_cells = [
+            (int(r), int(c)) for r, c in zip(*np.nonzero(~self.shelves), strict=True)
+        ]
 
     def _reward(self, agent: str, old: Cell, new: Cell, collided: set[str]) -> float:
         """One robot's reward for moving from `old` to `new` toward its current target.
