@@ -4,7 +4,7 @@ import numpy as np
 
 from multi_agent_warehouse import MultiAgentWarehouseEnv
 from multi_agent_warehouse.agents import POLICIES, GreedyPolicy, RandomPolicy
-from multi_agent_warehouse.evaluate import evaluate, run_episode
+from multi_agent_warehouse.evaluate import evaluate, evaluate_with_ci, run_episode
 from multi_agent_warehouse.rules import DOWN, LEFT, RIGHT, STAY, UP
 
 R0 = "robot_0"
@@ -72,6 +72,18 @@ def test_greedy_beats_random():
 
 def test_evaluate_is_deterministic():
     assert evaluate(POLICIES["greedy"], 2) == evaluate(POLICIES["greedy"], 2)
+
+
+def test_evaluate_with_ci_matches_evaluate_means():
+    stats = evaluate_with_ci(POLICIES["random"], 5)
+    means = evaluate(POLICIES["random"], 5)
+    assert {key: mean for key, (mean, _) in stats.items()} == means
+    assert all(half_width > 0 for _, half_width in stats.values())
+
+
+def test_evaluate_with_ci_single_episode_has_no_interval():
+    stats = evaluate_with_ci(POLICIES["random"], 1)
+    assert all(half_width == 0.0 for _, half_width in stats.values())
 
 
 def test_run_episode_stops_at_max_steps():

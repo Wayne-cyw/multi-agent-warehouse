@@ -28,22 +28,22 @@ in one sitting. Every non-obvious choice is written down with the alternatives I
   that is off by default and never used in evaluation, so reported numbers measure the game and not a
   training aid.
 - **Honest baselines**: a random and a greedy policy behind one two-method interface, scored on
-  seeded episodes (table below).
-- **Tested and linted**: 56 tests (headless Pygame via `SDL_VIDEODRIVER=dummy`), `ruff` check and
+  100 seeded episodes with 95% confidence intervals (table below).
+- **Tested and linted**: 59 tests (headless Pygame via `SDL_VIDEODRIVER=dummy`), `ruff` check and
   format clean.
 
 ## What the baselines show
 
-Mean per episode over 20 fixed seeds (1000 to 1019), 3 robots, 200 steps, shaping off:
+Mean per episode (± 95% confidence interval) over 100 fixed seeds (1000 to 1099), 3 robots, 200 steps, shaping off:
 
 | Policy | Deliveries / episode | Collisions / episode |
 |--------|---------------------:|---------------------:|
-| random |                 2.45 |                 9.90 |
-| greedy |                13.50 |               366.90 |
+| random |        2.63 ± 0.34   |        12.80 ± 1.49  |
+| greedy |       12.67 ± 2.07   |       401.30 ± 24.24 |
 
-Greedy delivers about 5.5x more than random, but its collision count is the interesting number. A
+Greedy delivers about 4.8x more than random, but its collision count is the interesting number. A
 collision is counted per robot per step, so 200 steps with 3 robots allows at most 600. A value of
-roughly 367 suggests that greedy robots spend much of the episode blocking each other, because the
+roughly 400 suggests that greedy robots spend much of the episode blocking each other, because the
 rule only looks at its own target and its four neighbours. That is exactly the failure that
 coordination is supposed to fix, and it is the gap a learned policy should be measured against.
 
@@ -92,7 +92,7 @@ delivered already sees its new target.
 | Policies see observations only | Policies read env internals | Keeps scripted and learned policies interchangeable |
 | Settings in one `config.py` | Constants per module | Changing the map or rewards is a one-file edit, and tests derive sizes from `LAYOUT` |
 
-The full list, with trade-offs, is in the design notes I keep alongside the code.
+The full list, with trade-offs, lives in private design notes that are not part of this repo.
 
 ## Challenges & What I Learned
 
@@ -131,7 +131,7 @@ pip install -e ".[dev]"
 ```bash
 python play.py                              # live demo (space pause, R reset, P switch policy, Q quit)
 python play.py --policy random --robots 4   # other policy, more robots
-python -m multi_agent_warehouse.evaluate    # reproduce the table above
+python -m multi_agent_warehouse.evaluate    # reproduce the table above (--episodes N to change the sample size)
 pytest                                      # run the tests
 ```
 
@@ -153,10 +153,10 @@ multi-agent-warehouse/
 
 ## Testing & Quality
 
-- 56 tests covering the rules, the environment contract (invalid actions, calls after the episode
+- 59 tests covering the rules, the environment contract (invalid actions, calls after the episode
   ends, bad robot counts, determinism), the renderer and the demo, all runnable headless.
 - `ruff` (rules `E, F, I, B, UP`, line length 100) and `ruff format --check`.
-- Seeded evaluation: identical calls return identical numbers.
+- Seeded evaluation: identical calls return identical numbers, reported with confidence intervals.
 
 ## Roadmap
 
