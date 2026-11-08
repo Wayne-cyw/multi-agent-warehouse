@@ -106,3 +106,83 @@ Figures: `e1/learning_curve_deliveries.png`, `e1/learning_curve_collisions.png`,
 - Learning-curve figures: with ten variants the curves are crowded and the colour cycle repeats (base and gamma_0.995 are both blue, ent_0.01 and net_128 both orange, shape_0 and coll_0.3 both green, shape_0.05 and coll_1.0 both red), so individual lines cannot be told apart from the legend; only the outlying `coll_1.0` (slow start) and the collision-curve extremes (`coll_1.0`, `coll_0.3`) are identifiable. The bar chart and tradeoff scatter are the readable figures (the scatter also reuses colours).
 
 Figures: `e2/variant_comparison.png`, `e2/tradeoff.png`.
+
+# E3 structure (observation and memory)
+
+## E3 settings actually used
+
+- **E3 compares at 500k steps, not 1M.** The checkpoint is really 500,736 steps. The reason is that LSTM training is about 30 times slower per step than the MLP: 545 steps/s for `lstm` against 16,608 for `base` in a 61k-step benchmark, and 536 to 615 steps/s per run inside E3. At 1M, the two recurrent variants would have needed about 5 h of training. The memory variants may therefore be disadvantaged relative to a 1M comparison: their curves are still rising at 500k, while `base` is flat from 100k to 500k.
+- Where the time goes: collecting rollouts with the LSTM is fast (about 34k steps/s). The PPO update is the slow part, about 5.5 s per 3,072-sample rollout. Episodes are 200 steps long and rollouts are 128, so almost every minibatch contains an episode start. In that case sb3-contrib (`RecurrentPPO._process_sequence`) leaves its batched path and steps the LSTM through the sequence in a Python loop, for every one of the 12 minibatches × 10 epochs, and for both the actor and the critic LSTM.
+- Variants: `base`, `rich_obs` (14-value observation), `lstm` (sb3-contrib `RecurrentPPO`, `MlpLstmPolicy`) and `rich_lstm` (both changes).
+  - Each variant equals `base` in every other field, including batch_size 256, n_steps 128 and net_arch (64, 64).
+  - The LSTM is the sb3-contrib default: one layer of 256 units, with separate actor and critic LSTMs, so the recurrent variants also have many more parameters.
+  - Truncations are bootstrapped in all four variants.
+- Runs: 5 training seeds each. Seeds 306, 320, 4, 157 and 27 were drawn at random and are recorded in `manifest.json`. Code at commit `489406f`.
+- Evaluation: eval seed base 2095561372, 100 episodes, shared by all four variants. Greedy baseline on this block: 14.26 deliveries, 409.6 collisions; random: 2.75 deliveries, 14.4 collisions.
+- Wall clock: 4 h 35 min (00:48 to 05:24) for 20 runs and their evaluations. About 1 h 48 min of that is the machine sleeping: idle sleep plus one "thermal emergency sleep" in the macOS power log. All of it fell inside `rich_lstm` seed 4, whose training shows eight pauses of 5 to 15 min. Active time was about 2 h 47 min. The sleep paused training and did not change it.
+- Per-run training time: `base` and `rich_obs` took 21 to 22 s each; `lstm` took 814 to 934 s; `rich_lstm` took 870 to 1,059 s, leaving out the 7,407 s of seed 4.
+- Numbers: sampled policy, final (500k) checkpoint, mean over 5 seeds of each seed's 100-episode mean. "±" is the seed std (n−1).
+- Verdict rule: the same as E2. Δ = variant mean − base mean; SE = sqrt(s_v²/n + s_b²/n); "helps" if Δ > 2·SE, "hurts" if Δ < −2·SE, otherwise "no clear effect".
+
+## E3 ranked results (sampled, 500k)
+
+| rank | variant | deliveries | collisions |
+|---|---|---|---|
+| 1 | rich_lstm | 65.15 ± 1.57 | 94.28 ± 12.98 |
+| 2 | lstm | 63.29 ± 2.24 | 104.50 ± 21.24 |
+| 3 | rich_obs | 60.19 ± 3.13 | 145.94 ± 17.90 |
+| 4 | base | 53.11 ± 1.74 | 183.83 ± 13.99 |
+
+Per-seed deliveries:
+
+| variant | per-seed deliveries |
+|---|---|
+| base | 53.3, 52.8, 51.4, 52.0, 55.9 |
+| rich_obs | 57.7, 64.9, 61.9, 58.8, 57.7 |
+| lstm | 65.1, 65.7, 63.1, 62.5, 60.0 |
+| rich_lstm | 65.7, 63.7, 67.2, 65.8, 63.4 |
+
+## E3 verdicts versus `base` (deliveries primary)
+
+| variant | Δ deliveries | SE | Δ/SE | verdict | Δ collisions |
+|---|---|---|---|---|---|
+| rich_obs | +7.08 | 1.60 | 4.42 | helps | -37.9 |
+| lstm | +10.17 | 1.27 | 8.03 | helps | -79.3 |
+| rich_lstm | +12.03 | 1.05 | 11.48 | helps | -89.6 |
+
+There are three comparisons against `base`. In E2 a single 2·SE crossing at n=5 had roughly an 8 to 10% chance under no effect. Here all three are 4.4 to 11.5 SE from zero, far past the threshold rather than near it, so none is flagged as tentative. The smallest effect, `rich_obs`, has the least margin. Every seed of every non-base variant scored above every `base` seed. The lowest non-base seed (`rich_obs`, 57.7) is only 1.8 above the highest `base` seed (55.9).
+
+The `rich_lstm` against `lstm` difference was not a planned comparison and is descriptive only: +1.86 deliveries, SE 1.22, Δ/SE 1.52, so no clear difference. With memory present, adding the rich observation gives at most a small gain that this experiment cannot resolve.
+
+## Deterministic evaluation (500k)
+
+| variant | deliveries | collisions | Δ deliveries vs base (Δ/SE) |
+|---|---|---|---|
+| rich_lstm | 37.36 ± 4.89 | 297.68 ± 42.69 | +24.55 (11.10) |
+| lstm | 31.88 ± 6.39 | 324.04 ± 44.47 | +19.08 (6.63) |
+| rich_obs | 14.39 ± 1.62 | 390.30 ± 35.75 | +1.58 (1.99, just under 2·SE: no clear effect) |
+| base | 12.80 ± 0.73 | 365.68 ± 14.87 | |
+
+What the data show:
+- Memory reduces the deterministic collapse but does not fix it. The argmax policy of `lstm` and `rich_lstm` delivers 2.5 to 3 times as much as `base`'s (32 to 37 against 12.8, far above greedy's 14.3).
+- That is still only 50 to 57% of their own sampled score. The sampled-minus-deterministic gap shrinks from about 40 deliveries (`base`) to 28 to 31.
+- Deterministic collisions stay high, at about 300 against about 100 sampled.
+- The recurrent variants' deterministic scores vary much more between seeds: lstm runs from 25.1 to 39.6.
+- The rich observation alone leaves the collapse essentially unchanged (14.4).
+
+Hypothesis, not tested: with memory, the argmax policy can condition on its recent history, for example noticing that it has been blocked for several steps, and so break some of the symmetric standoffs that a memoryless argmax repeats forever. A memoryless policy can only break those standoffs by sampling. Nothing here diagnoses the mechanism.
+
+## E3 interpretation and caveats
+
+Both structural changes clearly help at 500k steps on this eval block, and memory helps more than richer observations.
+- `lstm` adds about 10 deliveries over `base` and `rich_obs` about 7; combining them gives about 12. The combined gain is not distinguishable from `lstm` alone.
+- Both also cut collisions: `rich_lstm` and `lstm` to about 95 to 105, against 184 for `base`. On the trade-off scatter they move up and to the left, so this is not a trade of deliveries for safety.
+- The recurrent variants start worse (about 40 deliveries at 50k, against 54 for `base`) and overtake it by 200k. `base` is flat from 100k to 500k.
+
+These are 5-seed results, and the margins are large relative to seed spread, but four caveats apply:
+- The comparison is at 500k. The ranking at 1M or 3M is not measured. `base` improves late (E1: 53.9 at 1M, 60.8 at 3M), so the gap may narrow with more training.
+- `lstm` differs from `base` in both memory and parameter count (a 256-unit LSTM in front of the MLP). This experiment cannot separate memory from capacity. E2's `net_128`, a bigger MLP, did not help at 1M, which weakly suggests capacity alone is not the explanation.
+- The recurrent variants cost about 30 times more training wall time per step. At equal wall-clock time, `base` could train for many more steps.
+- Cross-experiment comparisons are unpaired (different eval blocks and seeds). `base` at 500k here (53.11) is consistent with E1's 50.26 ± 2.81 at 500k. Read loosely, `lstm` and `rich_lstm` at 500k already exceed E1's `base` at 3M (60.78 ± 1.77).
+
+Figures: the deliveries learning curves, bar chart and scatter are all readable. With four variants the colours are distinct (blue, yellow, green and orange-red), although `lstm` and `rich_lstm` overlap on the scatter. Copied: `e3/variant_comparison.png`, `e3/tradeoff.png`, `e3/learning_curve_deliveries.png`.
