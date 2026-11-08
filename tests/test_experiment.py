@@ -1,6 +1,7 @@
 """Tests for the multi-seed experiment runner, trained on tiny budgets."""
 
 import csv
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -285,6 +286,7 @@ SWEEP_CHANGES = {
     "net_128": ("net_arch", (128, 128)),
     "coll_0.3": ("env_kwargs.collision_penalty", -0.3),
     "coll_1.0": ("env_kwargs.collision_penalty", -1.0),
+    "rich_obs": ("env_kwargs.observation", "rich"),
 }
 
 
@@ -312,6 +314,13 @@ def test_sweep_variants_differ_from_base_in_exactly_one_field():
         assert flat[key] == value, name
     with pytest.raises(ValueError, match="unknown"):
         experiment.run_experiment("bad", ["nope"], out_root=Path("/nonexistent"), **TINY)
+
+
+def test_rich_obs_variant_sets_observation_kwarg():
+    rich = experiment.VARIANTS["rich_obs"]
+    base = experiment.VARIANTS["base"]
+    assert rich.env_kwargs == {"observation": "rich"}
+    assert dataclasses.replace(rich, env_kwargs=base.env_kwargs) == base
 
 
 def test_cli_run_passes_its_arguments(monkeypatch):

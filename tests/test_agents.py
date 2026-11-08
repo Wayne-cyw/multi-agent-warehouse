@@ -92,3 +92,16 @@ def test_run_episode_stops_at_max_steps():
     assert env.step_count == 10
     assert env.agents == []
     assert set(result) == {"deliveries", "collisions"}
+
+
+def test_greedy_policy_acts_identically_on_rich_observations():
+    basic_env = MultiAgentWarehouseEnv()
+    rich_env = MultiAgentWarehouseEnv(observation="rich")
+    basic_obs, _ = basic_env.reset(seed=3)
+    rich_obs, _ = rich_env.reset(seed=3)
+    policy = greedy()
+    for _ in range(20):
+        assert policy.act(rich_obs) == policy.act(basic_obs)
+        actions = policy.act(basic_obs)
+        basic_obs, *_ = basic_env.step(actions)
+        rich_obs, *_ = rich_env.step(actions)

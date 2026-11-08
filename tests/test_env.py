@@ -298,3 +298,73 @@ def test_invalid_reward_parameters_raise():
     for kwargs in ({"collision_penalty": 0.1}, {"shaping_scale": -0.1}):
         with pytest.raises(ValueError):
             MultiAgentWarehouseEnv(**kwargs)
+
+
+def test_rich_observation_has_14_values_and_basic_prefix():
+    basic = make_env()
+    rich = make_env(observation="rich")
+    assert rich.observation_space(R0).shape == (14,)
+    assert basic.observation_space(R0).shape == (8,)
+    basic_obs, *_ = basic.step(stay_except())
+    rich_obs, *_ = rich.step(stay_except())
+    for agent in rich.agents:
+        assert rich_obs[agent].shape == (14,)
+        assert rich_obs[agent].dtype == np.float32
+        np.testing.assert_array_equal(rich_obs[agent][:8], basic_obs[agent])
+        assert rich.observation_space(agent).contains(rich_obs[agent])
+
+
+def test_rich_robot_flags_separate_robots_from_shelves():
+    env = make_env(observation="rich")
+    env.positions[R0] = (0, 1)
+    env.positions[R1] = (0, 2)
+    obs, *_ = env.step(stay_except())
+    # The shelf below robot 0 sets its basic down flag but not its robot flag.
+    assert obs[R0][5] == 1.0 and obs[R0][9] == 0.0
+    # Robot 1 is to the right of robot 0: both flags are set.
+    assert obs[R0][7] == 1.0 and obs[R0][11] == 1.0
+    assert obs[R1][6] == 1.0 and obs[R1][10] == 1.0
+    assert obs[R0][8] == 0.0 and obs[R0][10] == 0.0
+
+
+def test_nearest_robot_offset_and_tie_break():
+    env = make_env(observation="rich")
+    env.positions = {R0: (3, 3), R1: (3, 6), R2: (6, 3)}
+    obs, *_ = env.step(stay_except())
+    # Robots 1 and 2 are both 3 away from robot 0, so the lower id wins.
+    np.testing.assert_allclose(obs[R0][12:], [0, 3 / LAST])
+    # For robot 1, robot 0 is 3 away and robot 2 is 6 away.
+    np.testing.assert_allclose(obs[R1][12:], [0, -3 / LAST])
+    env.positions = {R0: (0, 0), R1: (LAST, LAST), R2: (0, 2)}
+    obs, *_ = env.step(stay_except())
+    np.testing.assert_allclose(obs[R0][12:], [0, 2 / LAST])
+    np.testing.assert_allclose(obs[R1][12:], [-LAST / LAST, -(LAST - 2) / LAST])
+
+
+def test_single_robot_rich_offset_is_zero():
+    env = MultiAgentWarehouseEnv(n_robots=1, observation="rich")
+    obs, _ = env.reset(seed=0)
+    assert obs[R0].shape == (14,)
+    np.testing.assert_array_equal(obs[R0][8:], np.zeros(6, dtype=np.float32))
+
+
+def test_invalid_observation_mode_raises():
+    with pytest.raises(ValueError, match="basic"):
+        MultiAgentWarehouseEnv(observation="bogus")
+
+
+def test_rich_parallel_api():
+    parallel_api_test(MultiAgentWarehouseEnv(observation="rich"), num_cycles=300)
+
+
+def test_default_observation_is_basic_and_unchanged():
+    env = MultiAgentWarehouseEnv()
+    assert env.observation == "basic"
+    obs, _ = env.reset(seed=0)
+    assert all(o.shape == (8,) for o in obs.values())
+    explicit = MultiAgentWarehouseEnv(observation="basic")
+    explicit_obs, _ = explicit.reset(seed=0)
+    for agent in obs:
+        np.testing.assert_array_equal(obs[agent], explicit_obs[agent])
+    pinned = run_episode(MultiAgentWarehouseEnv(observation="basic"), GreedyPolicy(), 1000)
+    assert pinned == PINNED_GREEDY

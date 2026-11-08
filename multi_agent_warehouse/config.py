@@ -26,3 +26,6 @@ SHAPING_SCALE = 0.02
 
 RENDER_MODES = ("human", "rgb_array")
 RENDER_FPS = 10
+
+OBSERVATION_MODES = ("basic", "rich")
+OBS_SIZES = {"basic": 8, "rich": 14}

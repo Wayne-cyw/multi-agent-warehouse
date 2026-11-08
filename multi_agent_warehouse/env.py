@@ -18,6 +18,8 @@ from multi_agent_warehouse.config import (
     DELIVERY_REWARD,
     LAYOUT,
     MAX_ROBOTS,
+    OBS_SIZES,
+    OBSERVATION_MODES,
     RENDER_FPS,
     RENDER_MODES,
     SHAPING_SCALE,
@@ -39,6 +41,8 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         collision_penalty: The (non-positive) reward added when a robot collides.
         shaping_scale: The (non-negative) reward per cell of progress toward the target when
             `shaping` is on.
+        observation: The observation mode: `basic` (8 values) or `rich` (14 values, the basic
+            ones followed by robot-neighbour flags and the offset to the nearest other robot).
         render_mode: How `render` draws (`human` or `rgb_array`), or None for no drawing.
         render_fps: The frame rate of the `human` window.
         possible_agents: The id of every robot, in order.
@@ -61,6 +65,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         - self.max_steps >= 1
         - self.collision_penalty <= 0
         - self.shaping_scale >= 0
+        - self.observation in OBSERVATION_MODES
         - 0 <= self.step_count <= self.max_steps
         - self.total_deliveries >= 0
         - self.total_collisions >= 0
@@ -77,6 +82,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
     shaping: bool
     collision_penalty: float
     shaping_scale: float
+    observation: str
     render_mode: str | None
     render_fps: int
     possible_agents: list[str]
@@ -101,6 +107,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         *,
         collision_penalty: float = COLLISION_PENALTY,
         shaping_scale: float = SHAPING_SCALE,
+        observation: str = "basic",
     ) -> None:
         """Create the env with `n_robots` robots.
 
@@ -111,6 +118,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             - render_fps > 0
             - collision_penalty <= 0
             - shaping_scale >= 0
+            - observation in OBSERVATION_MODES
 
         Raise ValueError if a precondition is violated; python_ta cannot check the
         module constants or keyword arguments these preconditions use.
@@ -129,11 +137,14 @@ class MultiAgentWarehouseEnv(ParallelEnv):
             raise ValueError(f"collision_penalty must be at most 0, got {collision_penalty}")
         if shaping_scale < 0:
             raise ValueError(f"shaping_scale must be at least 0, got {shaping_scale}")
+        if observation not in OBSERVATION_MODES:
+            raise ValueError(f"observation must be one of {OBSERVATION_MODES}, got {observation!r}")
 
         self.max_steps = max_steps
         self.shaping = shaping
         self.collision_penalty = collision_penalty
         self.shaping_scale = shaping_scale
+        self.observation = observation
         self.render_mode = render_mode
         self.render_fps = render_fps
         self.possible_agents = [f"robot_{i}" for i in range(n_robots)]
@@ -157,13 +168,16 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         self._renderer: Renderer | None = None
 
         self.observation_spaces = {
-            agent: Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+            agent: Box(low=-1.0, high=1.0, shape=(OBS_SIZES[observation],), dtype=np.float32)
             for agent in self.possible_agents
         }
         self.action_spaces = {agent: Discrete(len(ACTION_DELTAS)) for agent in self.possible_agents}
 
     def observation_space(self, agent: str) -> Box:
-        """Eight floats in [-1, 1]: own cell, target offset, and four blocked-neighbour flags.
+        """Floats in [-1, 1]: 8 in `basic` mode, 14 in `rich` mode.
+
+        The first eight are own cell, target offset, and four blocked-neighbour flags. `rich`
+        adds four robot-neighbour flags and the offset to the nearest other robot.
 
         Preconditions:
             - agent in self.possible_agents
@@ -311,7 +325,7 @@ class MultiAgentWarehouseEnv(ParallelEnv):
         return candidates[int(self._rng.integers(len(candidates)))]
 
     def _observations(self) -> dict[str, np.ndarray]:
-        """Build every live robot's 8-value observation."""
+        """Build every live robot's observation for the current mode."""
         occupied = set(self.positions.values())
         observations = {}
         for agent in self.agents:
@@ -321,10 +335,33 @@ class MultiAgentWarehouseEnv(ParallelEnv):
                 _is_blocked_cell((row + d_row, col + d_col), occupied, self.shelves)
                 for d_row, d_col in ACTION_DELTAS[1:]
             ]
-            obs = np.array([row, col, t_row - row, t_col - col, *blocked], dtype=np.float32)
+            values = [row, col, t_row - row, t_col - col, *blocked]
+            if self.observation == "rich":
+                values += self._rich_values(agent, occupied)
+            obs = np.array(values, dtype=np.float32)
             obs[:4] /= self._scale
+            if self.observation == "rich":
+                obs[12:] /= self._scale
             observations[agent] = obs
         return observations
+
+    def _rich_values(self, agent: str, occupied: set[Cell]) -> list[float | bool]:
+        """The extra rich values: four robot-neighbour flags, then the nearest-robot offset.
+
+        The offsets are not yet divided by the scale. Ties for nearest go to the smaller
+        Manhattan distance, then the lower robot id.
+
+        Preconditions:
+            - agent in self.positions
+        """
+        row, col = self.positions[agent]
+        flags = [(row + d_row, col + d_col) in occupied for d_row, d_col in ACTION_DELTAS[1:]]
+        others = [a for a in self.agents if a != agent]
+        if not others:
+            return [*flags, 0, 0]
+        nearest = min(others, key=lambda a: _manhattan(self.positions[a], (row, col)))
+        n_row, n_col = self.positions[nearest]
+        return [*flags, n_row - row, n_col - col]
 
 
 def _is_blocked_cell(cell: Cell, occupied: set[Cell], shelves: np.ndarray) -> bool:

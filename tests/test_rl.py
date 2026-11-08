@@ -264,3 +264,25 @@ def test_rl_policy_rejects_wrong_observation_size():
 
     with pytest.raises(ValueError, match="expects 8"):
         policy.act({"robot_0": np.zeros(14, dtype=np.float32)})
+
+
+def test_rich_observation_model_trains_and_acts(tmp_path):
+    import numpy as np
+
+    from multi_agent_warehouse.agents import RLPolicy
+    from multi_agent_warehouse.env import MultiAgentWarehouseEnv
+    from multi_agent_warehouse.train import TrainConfig, fit
+
+    cfg = TrainConfig(n_envs=2, total_steps=3072, env_kwargs={"observation": "rich"})
+    path = fit(cfg, out=tmp_path / "rich")
+    policy = RLPolicy(path)
+
+    rich_obs, _ = MultiAgentWarehouseEnv(observation="rich").reset(seed=0)
+    actions = policy.act(rich_obs)
+    assert set(actions) == set(rich_obs)
+    assert all(a in range(5) for a in actions.values())
+
+    basic_obs, _ = MultiAgentWarehouseEnv().reset(seed=0)
+    with pytest.raises(ValueError, match="expects 14"):
+        policy.act(basic_obs)
+    assert np.all([o.shape == (14,) for o in rich_obs.values()])

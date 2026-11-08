@@ -64,6 +64,7 @@ VARIANTS.update(
         "net_128": dataclasses.replace(_BASE, net_arch=(128, 128)),
         "coll_0.3": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -0.3}),
         "coll_1.0": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -1.0}),
+        "rich_obs": dataclasses.replace(_BASE, env_kwargs={"observation": "rich"}),
     }
 )
 
