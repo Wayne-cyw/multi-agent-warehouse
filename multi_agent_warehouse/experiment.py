@@ -374,9 +374,17 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--steps", type=int, default=None, help="override every variant's steps")
     run.add_argument("--train-seeds", type=_int_list, default=None, help="e.g. 1,2; else random")
     run.add_argument("--eval-seed-base", type=int, default=None, help="random if omitted")
+    plot = commands.add_parser("plot", help="write figures and report.md for an experiment")
+    plot.add_argument("--name", required=True)
+    plot.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
     args = parser.parse_args(argv)
 
-    if args.command == "run":
+    if args.command == "plot":
+        from multi_agent_warehouse.plots import plot_all
+
+        for path in plot_all(args.out_root / args.name):
+            print(path)
+    elif args.command == "run":
         directory = run_experiment(
             name=args.name,
             variants=[v.strip() for v in args.variants.split(",") if v.strip()],
