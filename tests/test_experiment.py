@@ -275,6 +275,45 @@ def test_unknown_variant_is_rejected(tmp_path):
     assert not (tmp_path / "bad").exists()
 
 
+SWEEP_CHANGES = {
+    "ent_0.01": ("ent_coef", 0.01),
+    "shape_0": ("env_kwargs.shaping_scale", 0.0),
+    "shape_0.05": ("env_kwargs.shaping_scale", 0.05),
+    "shape_0.1": ("env_kwargs.shaping_scale", 0.1),
+    "gamma_0.95": ("gamma", 0.95),
+    "gamma_0.995": ("gamma", 0.995),
+    "net_128": ("net_arch", (128, 128)),
+    "coll_0.3": ("env_kwargs.collision_penalty", -0.3),
+    "coll_1.0": ("env_kwargs.collision_penalty", -1.0),
+}
+
+
+def _flatten(config):
+    flat = {}
+    for key, value in config.to_dict().items():
+        if key == "env_kwargs":
+            flat.update({f"env_kwargs.{k}": v for k, v in value.items()})
+        else:
+            flat[key] = tuple(value) if isinstance(value, list) else value
+    return flat
+
+
+def test_sweep_variants_differ_from_base_in_exactly_one_field():
+    base = _flatten(experiment.VARIANTS["base"])
+    for name, (key, value) in SWEEP_CHANGES.items():
+        assert name in experiment.VARIANTS
+        flat = _flatten(experiment.VARIANTS[name])
+        differing = {
+            k
+            for k in base.keys() | flat.keys()
+            if base.get(k, "<absent>") != flat.get(k, "<absent>")
+        }
+        assert differing == {key}, name
+        assert flat[key] == value, name
+    with pytest.raises(ValueError, match="unknown"):
+        experiment.run_experiment("bad", ["nope"], out_root=Path("/nonexistent"), **TINY)
+
+
 def test_cli_run_passes_its_arguments(monkeypatch):
     calls = []
     monkeypatch.setattr(experiment, "run_experiment", lambda **kwargs: calls.append(kwargs))

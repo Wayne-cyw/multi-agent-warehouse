@@ -52,6 +52,20 @@ VARIANTS: dict[str, TrainConfig] = {
         ),
     ),
 }
+_BASE = VARIANTS["base"]
+VARIANTS.update(
+    {
+        "ent_0.01": dataclasses.replace(_BASE, ent_coef=0.01),
+        "shape_0": dataclasses.replace(_BASE, env_kwargs={"shaping_scale": 0.0}),
+        "shape_0.05": dataclasses.replace(_BASE, env_kwargs={"shaping_scale": 0.05}),
+        "shape_0.1": dataclasses.replace(_BASE, env_kwargs={"shaping_scale": 0.1}),
+        "gamma_0.95": dataclasses.replace(_BASE, gamma=0.95),
+        "gamma_0.995": dataclasses.replace(_BASE, gamma=0.995),
+        "net_128": dataclasses.replace(_BASE, net_arch=(128, 128)),
+        "coll_0.3": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -0.3}),
+        "coll_1.0": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -1.0}),
+    }
+)
 
 MODES = ("sampled", "deterministic")
 CURVE_COLUMNS = (
