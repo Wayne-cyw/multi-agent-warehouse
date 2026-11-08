@@ -1,0 +1,262 @@
+"""Tests for the multi-seed experiment runner, trained on tiny budgets."""
+
+import csv
+import json
+import shutil
+import subprocess
+from collections import Counter
+from pathlib import Path
+
+import pytest
+
+from multi_agent_warehouse import experiment
+from multi_agent_warehouse.agents import GreedyPolicy
+from multi_agent_warehouse.evaluate import evaluate_episodes, summarise
+
+pytest.importorskip("stable_baselines3")
+pytest.importorskip("supersuit")
+
+TINY = {"n_seeds": 2, "total_steps": 3072, "n_envs": 2, "n_eval_episodes": 2}
+CURVE_COLUMNS = [
+    "variant",
+    "seed",
+    "timesteps",
+    "mode",
+    "mean_deliveries",
+    "ci_deliveries",
+    "mean_collisions",
+    "ci_collisions",
+    "n_episodes",
+]
+MANIFEST_KEYS = {
+    "name",
+    "created",
+    "git_commit",
+    "versions",
+    "train_seeds",
+    "eval_seed_base",
+    "n_eval_episodes",
+    "variants",
+}
+
+
+def _rows(path: Path) -> list[dict[str, str]]:
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _manifest(directory: Path) -> dict:
+    return json.loads((directory / "manifest.json").read_text())
+
+
+def _curve_keys(directory: Path) -> list[tuple[str, str, str, str]]:
+    rows = _rows(directory / "eval_curve.csv")
+    return [(r["variant"], r["seed"], r["timesteps"], r["mode"]) for r in rows]
+
+
+class _Stop(Exception):
+    pass
+
+
+def _stopped_run(monkeypatch, tmp_path, name, variants, **kwargs):
+    """Start a run that stops at its first training, so only its manifest is written.
+
+    Returns the experiment directory and the seeds `fit` was called with.
+    """
+    seeds = []
+
+    def stop(cfg, out, log_dir=None, verbose=0):
+        seeds.append(cfg.seed)
+        raise _Stop
+
+    monkeypatch.setattr(experiment, "fit", stop)
+    with pytest.raises(_Stop):
+        experiment.run_experiment(name, variants, out_root=tmp_path, **{**TINY, **kwargs})
+    return tmp_path / name, seeds
+
+
+@pytest.fixture(scope="module")
+def finished(tmp_path_factory):
+    # One shared run keeps the file fast (contract checking makes every episode slow); tests that
+    # change it work on a copy.
+    root = tmp_path_factory.mktemp("experiments")
+    return experiment.run_experiment("tiny", ["legacy"], out_root=root, **TINY)
+
+
+def test_run_experiment_writes_manifest_curve_and_baselines(finished):
+    assert finished.name == "tiny"
+    assert set(_manifest(finished)) == MANIFEST_KEYS
+    with open(finished / "eval_curve.csv", newline="") as f:
+        assert csv.DictReader(f).fieldnames == CURVE_COLUMNS
+    baselines = _rows(finished / "baselines.csv")
+    assert [row["policy"] for row in baselines] == ["random", "greedy"]
+    for seed in _manifest(finished)["train_seeds"]:
+        run_dir = finished / "legacy" / f"seed_{seed}"
+        assert (run_dir / "final.zip").exists()
+        assert (run_dir / "config.json").exists()
+        assert (run_dir / "progress.csv").exists()
+
+
+def test_train_seeds_are_random_unless_given(finished, tmp_path, monkeypatch):
+    again, _ = _stopped_run(monkeypatch, tmp_path, "again", ["legacy"])
+    given, fitted = _stopped_run(monkeypatch, tmp_path, "given", ["legacy"], train_seeds=[11, 12])
+
+    assert _manifest(again)["train_seeds"] != _manifest(finished)["train_seeds"]
+    assert _manifest(given)["train_seeds"] == [11, 12]
+    assert fitted == [11]
+
+
+def test_train_seeds_avoid_the_eval_block(finished):
+    manifest = _manifest(finished)
+    base = manifest["eval_seed_base"]
+    eval_seeds = range(base, base + manifest["n_eval_episodes"])
+
+    assert manifest["n_eval_episodes"] == 2
+    assert not set(manifest["train_seeds"]) & set(eval_seeds)
+
+
+def test_manifest_records_commit_and_versions(finished, tmp_path, monkeypatch):
+    manifest = _manifest(finished)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(experiment.__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    assert manifest["git_commit"] == head
+    assert set(manifest["versions"]) == {
+        "python",
+        "numpy",
+        "torch",
+        "stable_baselines3",
+        "supersuit",
+        "gymnasium",
+        "pettingzoo",
+    }
+    assert manifest["versions"]["stable_baselines3"] != "not installed"
+    legacy = manifest["variants"]["legacy"]
+    assert legacy["total_steps"] == 3072
+    assert legacy["n_envs"] == 2
+    assert legacy["checkpoint_steps"] == [1536]
+    assert legacy["bootstrap_truncation"] is False
+    both, _ = _stopped_run(monkeypatch, tmp_path, "both", ["legacy", "base"])
+    base = _manifest(both)["variants"]["base"]
+    assert base["bootstrap_truncation"] is True
+    assert base["total_steps"] == 3072
+    assert base["checkpoint_steps"] == [1536]
+
+
+def test_eval_curve_has_a_row_per_checkpoint_seed_and_mode(finished):
+    seeds = [str(seed) for seed in _manifest(finished)["train_seeds"]]
+    keys = _curve_keys(finished)
+    expected = {
+        (variant, seed, timesteps, mode)
+        for variant in ("legacy",)
+        for seed in seeds
+        for timesteps in ("1536", "3072")
+        for mode in ("sampled", "deterministic")
+    }
+
+    assert len(keys) == len(set(keys))
+    assert set(keys) == expected
+    assert all(row["n_episodes"] == "2" for row in _rows(finished / "eval_curve.csv"))
+
+
+def test_baselines_use_the_same_eval_seeds(finished):
+    manifest = _manifest(finished)
+    base = manifest["eval_seed_base"]
+    eval_seeds = range(base, base + manifest["n_eval_episodes"])
+    stats = summarise(evaluate_episodes(GreedyPolicy, eval_seeds))
+    greedy = next(row for row in _rows(finished / "baselines.csv") if row["policy"] == "greedy")
+
+    assert float(greedy["mean_deliveries"]) == stats["deliveries"][0]
+    assert float(greedy["ci_deliveries"]) == stats["deliveries"][1]
+    assert float(greedy["mean_collisions"]) == stats["collisions"][0]
+    assert float(greedy["ci_collisions"]) == stats["collisions"][1]
+    assert greedy["n_episodes"] == "2"
+
+
+def test_interrupted_run_is_completed_on_rerun(finished, tmp_path, monkeypatch):
+    shutil.copytree(finished, tmp_path / "tiny")
+    lost = _manifest(finished)["train_seeds"][1]
+    shutil.rmtree(tmp_path / "tiny" / "legacy" / f"seed_{lost}")
+    trained = []
+
+    # Restoring the finished run stands in for retraining, which the shared run already covers.
+    def counting_fit(cfg, out, log_dir=None, verbose=0):
+        trained.append(cfg.seed)
+        assert not log_dir.exists()
+        shutil.copytree(finished / "legacy" / f"seed_{cfg.seed}", log_dir)
+        return out.with_suffix(".zip")
+
+    monkeypatch.setattr(experiment, "fit", counting_fit)
+
+    directory = experiment.run_experiment("tiny", ["legacy"], out_root=tmp_path, **TINY)
+
+    assert trained == [lost]
+    keys = _curve_keys(directory)
+    assert Counter(keys).most_common(1)[0][1] == 1
+    assert set(keys) == set(_curve_keys(finished))
+    assert len(_rows(directory / "baselines.csv")) == 2
+
+    trained.clear()
+    experiment.run_experiment("tiny", ["legacy"], out_root=tmp_path, **TINY)
+
+    assert trained == []
+    assert len(_curve_keys(directory)) == len(keys)
+
+
+def test_rerun_with_conflicting_seeds_is_rejected(finished, tmp_path):
+    shutil.copytree(finished, tmp_path / "tiny")
+    seeds = _manifest(finished)["train_seeds"]
+
+    with pytest.raises(ValueError, match="train_seeds"):
+        experiment.run_experiment(
+            "tiny",
+            ["legacy"],
+            out_root=tmp_path,
+            train_seeds=[seed + 1 for seed in seeds],
+            **TINY,
+        )
+
+
+def test_unknown_variant_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="legacy"):
+        experiment.run_experiment("bad", ["nope"], out_root=tmp_path, **TINY)
+    assert not (tmp_path / "bad").exists()
+
+
+def test_cli_run_passes_its_arguments(monkeypatch):
+    calls = []
+    monkeypatch.setattr(experiment, "run_experiment", lambda **kwargs: calls.append(kwargs))
+
+    experiment.main(
+        [
+            "run",
+            "--name",
+            "n",
+            "--variants",
+            "legacy,base",
+            "--seeds",
+            "2",
+            "--steps",
+            "3072",
+            "--train-seeds",
+            "1,2",
+            "--eval-seed-base",
+            "20000",
+        ]
+    )
+
+    assert calls == [
+        {
+            "name": "n",
+            "variants": ["legacy", "base"],
+            "n_seeds": 2,
+            "total_steps": 3072,
+            "train_seeds": [1, 2],
+            "eval_seed_base": 20000,
+        }
+    ]
