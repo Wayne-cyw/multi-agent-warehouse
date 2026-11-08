@@ -186,3 +186,42 @@ These are 5-seed results, and the margins are large relative to seed spread, but
 - Cross-experiment comparisons are unpaired (different eval blocks and seeds). `base` at 500k here (53.11) is consistent with E1's 50.26 ± 2.81 at 500k. Read loosely, `lstm` and `rich_lstm` at 500k already exceed E1's `base` at 3M (60.78 ± 1.77).
 
 Figures: the deliveries learning curves, bar chart and scatter are all readable. With four variants the colours are distinct (blue, yellow, green and orange-red), although `lstm` and `rich_lstm` overlap on the scatter. Copied: `e3/variant_comparison.png`, `e3/tradeoff.png`, `e3/learning_curve_deliveries.png`.
+
+# E4 generalisation (layouts and robot counts)
+
+## E4 settings actually used
+
+- Variants: `fixed` (= `base`: default layout, 3 robots) and `rand` (a random one of `default`, `open`, `aisles`, `scatter` at every reset; 2, 3, 4 or 5 robots across the 8 warehouse copies). Both train 1M steps.
+- 5 training seeds [715, 774, 15, 773, 203] (drawn at random, recorded in `manifest.json`), sampled actions, 100 evaluation episodes per cell on the manifest's eval block, shaping off.
+- Every final model is evaluated on all 6 layouts and robot counts 2 to 6 (`generalisation.csv`). Held-out layouts (never trained on): `wide_gap` and `maze_lite`. Held-out robot count: 6.
+- Figures: `e4/generalisation.png` (heatmap), `e4/learning_curve_deliveries.png` and `e4/variant_comparison.png` (default layout, 3 robots).
+
+## E4 held-out gap
+
+Mean deliveries per episode on the held-out layouts, averaged over robot counts 2 to 6 and over the two layouts, then summarised over seeds (mean ± std, n = 5):
+
+| variant | held-out layouts | training layouts | default layout |
+|---|---|---|---|
+| fixed | 34.12 ± 1.66 | 26.76 ± 1.15 | 48.18 ± 2.14 |
+| rand | 26.14 ± 2.23 | 36.17 ± 1.77 | 46.34 ± 0.91 |
+| rand − fixed | −7.98 (SE 1.24) | +9.41 (SE 0.94) | −1.84 (SE 1.04) |
+
+SE of a difference is sqrt(var_fixed/5 + var_rand/5) over per-seed means. Per held-out layout:
+
+| layout | fixed | rand | rand − fixed (SE) |
+|---|---|---|---|
+| wide_gap | 55.75 ± 3.36 | 37.97 ± 4.40 | −17.78 (2.48) |
+| maze_lite | 12.50 ± 0.66 | 14.31 ± 1.11 | +1.82 (0.58) |
+
+The held-out gap is negative: training on random layouts and robot counts did not help on the held-out layouts, and on average hurt (about 6.4 standard errors below `fixed`). It is dominated by `wide_gap`, where `fixed` is far better; on `maze_lite` `rand` is slightly better (about 3 SE) but both are poor (12 to 14, near greedy's 13 on the default layout).
+
+By robot count on the held-out layouts, `rand − fixed` is −9.3, −11.6, −9.0, −6.3 and −3.7 for 2, 3, 4, 5 and 6 robots. The gap shrinks at higher counts; 6 robots was never seen in training by either variant.
+
+## E4 interpretation and caveats
+
+- On the training layouts `rand` wins by about 9 deliveries, as expected, and the heatmap shows why: `fixed` collapses on `aisles` (10 to 15) and `scatter` (11 to 24), where `rand` gets 21 to 38. `fixed` is also much weaker with few robots on `open`. The two are statistically level on `default` (−1.84, SE 1.04), so mixing costs little on the home layout.
+- `fixed` transfers well to `wide_gap` (55.75, better than its own default-layout score at 3 to 5 robots) because that layout is close to the default one: the same two shelf pairs, only wider. It is a weak test of generalisation, not strong evidence that `fixed` generalises. `maze_lite` is the real stress test and neither variant copes.
+- `rand` splits the same 1M steps over four layouts and four robot counts, so it sees about a quarter of the data per layout. A longer run might narrow or reverse the held-out gap; not tested.
+- Only two held-out layouts, one of them nearly in-distribution, so the held-out average rests on very few distinct situations. The held-out aggregate mixes a score near 56 with one near 13 and is mostly a statement about `wide_gap`.
+- The observation is the absolute cell plus the target offset, so a policy can memorise the default map. This is a plausible reason `fixed` does well where the map resembles the default and poorly elsewhere; no experiment here tests it.
+- Seeds are 5 per variant; the eval block is shared, so comparisons within E4 are paired on episodes, but not comparable to E1 to E3 numbers.
