@@ -20,6 +20,7 @@ from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 from multi_agent_warehouse.seeds import draw_seeds
 
 ALGOS = ("ppo", "recurrent_ppo")
+DEFAULT_CLI_OUT = "models/ppo_retrained"
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,8 @@ def fit(cfg: TrainConfig, out: Path, log_dir: Path | None = None, verbose: int =
 
     algo_class = model_class(cfg.algo)
     out = Path(out)
+    # SB3 adds ".zip" only when the name has no suffix, so a dotted name is saved as given.
+    zip_path = out.with_suffix(".zip") if out.suffix == "" else out
     vec_env = _make_vec_env(cfg)
     try:
         model = algo_class(
@@ -277,11 +280,10 @@ def fit(cfg: TrainConfig, out: Path, log_dir: Path | None = None, verbose: int =
         model.learn(cfg.total_steps, callback=callback)
         out.parent.mkdir(parents=True, exist_ok=True)
         model.save(out)
-        sidecar = out.with_suffix(".zip").with_suffix(".json")
-        sidecar.write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
+        zip_path.with_suffix(".json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
     finally:
         vec_env.close()
-    return out.with_suffix(".zip")
+    return zip_path
 
 
 def train(
@@ -321,7 +323,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--steps", type=int, default=300_000)
     parser.add_argument("--envs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=None, help="random in [0, 1000) if omitted")
-    parser.add_argument("--out", default="models/ppo_multi_agent_warehouse")
+    parser.add_argument("--out", default=DEFAULT_CLI_OUT, help="never the shipped model's path")
+    parser.add_argument(
+        "--no-bootstrap-truncation",
+        action="store_true",
+        help="treat time-limit truncations as terminal, as the first version did",
+    )
     parser.add_argument("--n-steps", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--ent-coef", type=float, default=0.0)
@@ -344,6 +351,7 @@ def main(argv: list[str] | None = None) -> None:
         gamma=args.gamma,
         ent_coef=args.ent_coef,
         net_arch=tuple(args.net_arch),
+        bootstrap_truncation=not args.no_bootstrap_truncation,
     )
     path = fit(cfg, Path(args.out), log_dir=args.log_dir, verbose=args.verbose)
     print(f"saved {path}")

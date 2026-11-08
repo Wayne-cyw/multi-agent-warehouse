@@ -31,8 +31,8 @@ is compared against. So I wrote the rules, rewards, observations and renderer my
 PettingZoo `ParallelEnv` API, tested them, added two scripted baselines, and only then trained an
 agent and measured it against them.
 
-The library is deliberately small (about 1,000 lines, docstrings included) so the whole thing can
-be read in one sitting.
+The library is deliberately small, so the environment, baselines and training code can be read in
+one sitting.
 
 ## The RL Approach
 
@@ -41,9 +41,9 @@ be read in one sitting.
 | Piece | Choice | Why it matters for learning |
 |---|---|---|
 | Setting | Simultaneous-move, partially observable, with individual rewards | Robots act at once and see only their neighbourhood, so coordination has to emerge from local information |
-| Observation | `Box(-1, 1, (8,))`: own row and column, offset to target, four blocked flags (wall, shelf or another robot) | Small enough to learn from quickly, yet it contains everything needed to avoid a neighbour |
+| Observation | `Box(-1, 1, (8,))` by default: own row and column, offset to target, four blocked flags (wall, shelf or another robot). The shipped model uses the optional 14-value `rich` mode (adds four robot-neighbour flags and the offset to the nearest robot) | Small enough to learn from quickly, yet it contains everything needed to avoid a neighbour |
 | Actions | `Discrete(5)`: stay, up, down, left, right | Discrete, so PPO's categorical policy applies directly |
-| Reward | +1.0 delivery, -0.01 per step, -0.1 per collision | The step penalty rewards speed and the collision penalty is the only signal about other robots |
+| Reward | +1.0 delivery, -0.01 per step, -0.1 per collision (environment default; the shipped model was trained with -0.3) | The step penalty rewards speed and the collision penalty is the only signal about other robots |
 | Episode | 200 steps, all robots truncated together | A fixed horizon makes episodes comparable |
 
 ### Training pipeline
@@ -68,10 +68,16 @@ be read in one sitting.
    comparison, described in [`FINDINGS.md`](docs/multi_agent_warehouse/results/FINDINGS.md).
 
 ```bash
-pip install -e ".[rl]"
-python -m multi_agent_warehouse.train   # the original plain PPO: 300,000 steps, 8 envs, n_steps 128
+pip install -e ".[rl]"     # add ",plot" for `experiment plot`
+python -m multi_agent_warehouse.train   # plain PPO, 300k steps, random seed; writes models/ppo_retrained.zip
 python -m multi_agent_warehouse.experiment run --name my-run --variants tuned --seeds 1 --steps 1000000
 ```
+
+`train` never writes over the shipped model (its default output is `models/ppo_retrained`). Its
+defaults are a plain PPO with truncation bootstrapping and a random seed, which is not the
+first-version recipe. `train --seed 0 --no-bootstrap-truncation` uses the settings of the first
+version's recipe (seed 0, truncations treated as terminal); I have not checked that it reproduces
+the committed `ppo_v1_300k.zip` bit for bit.
 
 The committed model, `models/ppo_multi_agent_warehouse.zip` (7.2 MB), is the `tuned` variant
 (training seed 330, 1M steps). It comes with a sidecar, `models/ppo_multi_agent_warehouse.json`,
@@ -179,7 +185,8 @@ though it still does better with sampling (60). The cause is not diagnosed.
 **Generalisation.** Both variants were trained on the default layout with 3 robots only, then
 evaluated on every layout and 2 to 6 robots (100 episodes per cell). On two layouts neither had
 seen, the tuned model averaged 42.7 deliveries against 34.7 for the plain PPO, and on the default
-layout it gets better with more robots while the plain PPO gets worse. The harder held-out layout
+layout its total deliveries rise with more robots (44 at 2 robots to 83 at 6) while the plain
+PPO's fall (49 to 42). Per robot, throughput still falls for the tuned model (about 22 to 14). The harder held-out layout
 (`maze_lite`) stays poor for both (22 and 13).
 
 ![Deliveries by layout and robot count](docs/multi_agent_warehouse/generalisation.png)
@@ -271,8 +278,12 @@ config.py   layout + every tunable number (the only place settings live)
 rules.py    resolve_moves(): pure function, no env state
 env.py      MultiAgentWarehouseEnv: ParallelEnv built on rules + config
 render.py   Renderer: always draws offscreen, returns an RGB array; "human" also blits to a window
-agents.py   Policy protocol (reset, act) + RandomPolicy, GreedyPolicy, RLPolicy
-train.py    trains the shared PPO policy (optional `rl` extra)
+agents.py   Policy protocol (reset, act) + RandomPolicy, GreedyPolicy, RLPolicy, model sidecars
+train.py    trains the shared PPO / recurrent PPO policy (optional `rl` extra)
+seeds.py    random training and evaluation seeds
+experiment.py  multi-seed experiments, generalisation runs, model selection on a test block
+plots.py    learning curves, comparison figures and reports (optional `plot` extra)
+plots_generalisation.py  layout-by-robot-count heatmaps
 evaluate.py seeded evaluation table with confidence intervals
 play.py     live demo with keyboard controls
 ```
@@ -282,7 +293,7 @@ play.py     live demo with keyboard controls
 | Decision | Alternatives considered | Why I chose this |
 |---|---|---|
 | `ParallelEnv` | AEC (turn-based) | Robots act simultaneously, and Parallel maps directly onto vectorised training |
-| 8-number local observation | Full-grid or windowed image | Small enough to learn from quickly; still contains everything a policy needs to avoid a neighbour |
+| Small local observation (8 numbers, 14 in `rich` mode) | Full-grid or windowed image | Small enough to learn from quickly; still contains everything a policy needs to avoid a neighbour |
 | One shared network (parameter sharing) | Independent networks per robot; centralised-critic methods (MAPPO, QMIX) | Identical robots, so one network learns from all experience; the simplest multi-agent training that works with single-agent libraries |
 | Stable-Baselines3 PPO | Hand-written PPO | The goal is to apply and evaluate PPO, not to write an optimiser |
 | Shaping off by default, never in evaluation | Always on | Keeps reported numbers about the task, not the training aid |
@@ -298,7 +309,7 @@ Requires Python 3.10+.
 git clone https://github.com/Wayne-cyw/multi-agent-warehouse.git
 cd multi-agent-warehouse
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,rl]"      # drop ",rl" to skip PyTorch (scripted baselines only)
+pip install -e ".[dev,rl,plot]"  # drop ",rl" to skip PyTorch (scripted baselines only); "plot" is for experiment figures
 ```
 
 ```bash
@@ -306,7 +317,7 @@ python play.py --policy rl                  # watch the trained PPO agent
 python play.py                              # greedy baseline (space pause, R reset, P switch policy, Q quit)
 python play.py --policy random --robots 4   # other policy, more robots
 python -m multi_agent_warehouse.evaluate    # reproduce the results table (--episodes N changes the sample size)
-python -m multi_agent_warehouse.train       # retrain the original plain PPO (writes models/ppo_multi_agent_warehouse.zip and its sidecar)
+python -m multi_agent_warehouse.train       # train a plain PPO (writes models/ppo_retrained.zip and its sidecar)
 pytest                                      # run the tests
 ```
 

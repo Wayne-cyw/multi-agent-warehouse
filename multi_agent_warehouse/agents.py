@@ -257,11 +257,14 @@ POLICIES: dict[str, Callable[[], Policy]] = {
 
 
 def available_policies() -> dict[str, Callable[[], Policy]]:
-    """`POLICIES`, plus `rl` when the model file exists and Stable-Baselines3 is installed.
+    """`POLICIES`, plus `rl` when the model file exists and its libraries are installed.
 
-    The `rl` policy is built with the algorithm recorded in the model's sidecar.
+    Those are Stable-Baselines3, and sb3-contrib too when the model's sidecar says it is a
+    recurrent PPO. The `rl` policy is built with the algorithm recorded in the sidecar.
     """
     policies = dict(POLICIES)
     if MODEL_PATH.exists() and importlib.util.find_spec("stable_baselines3") is not None:
-        policies["rl"] = lambda: RLPolicy(MODEL_PATH, algo=policy_algo(MODEL_PATH))
+        algo = policy_algo(MODEL_PATH)
+        if algo != "recurrent_ppo" or importlib.util.find_spec("sb3_contrib") is not None:
+            policies["rl"] = lambda: RLPolicy(MODEL_PATH, algo=algo)
     return policies

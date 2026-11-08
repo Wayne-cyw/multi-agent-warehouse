@@ -268,7 +268,7 @@ Every final model on all layouts and robot counts 2 to 6, 100 episodes per cell,
 | tuned | 67.73 ± 2.62 | 42.71 ± 2.78 | 21.87 ± 3.33 | 26.70 ± 2.50 |
 | base | 49.74 ± 3.04 | 34.73 ± 1.49 | 12.63 ± 0.63 | 20.35 ± 0.46 |
 
-(The default-layout column averages robot counts 2 to 6.) Both are trained on the default layout only, so the "training layouts" column is also unseen for them. `tuned` is ahead everywhere, and on the default layout it improves with more robots (44.1 at 2, 60.4 at 3, 82.6 at 6) while `base` falls with them (49.1 at 2, 41.5 at 6). 6 robots were never trained on. `maze_lite` stays hard for both (22 and 13).
+(The default-layout column averages robot counts 2 to 6.) Both are trained on the default layout only, so the "training layouts" column is also unseen for them. `tuned` is ahead everywhere, and on the default layout its total deliveries rise with more robots (44.1 at 2, 60.4 at 3, 82.6 at 6) while `base`'s fall (49.1 at 2, 41.5 at 6). Per robot, the tuned model's throughput still falls (about 22 deliveries per robot at 2 robots, about 14 at 6). 6 robots were never trained on. `maze_lite` stays hard for both (22 and 13).
 
 ## E5 caveats
 

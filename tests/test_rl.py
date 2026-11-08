@@ -464,3 +464,51 @@ def test_fit_writes_a_sidecar_next_to_the_model(tmp_path):
     path = fit(cfg, tmp_path / "m")
 
     assert policy_env_kwargs(path) == {"observation": "rich"}
+
+
+def test_rl_policy_needs_sb3_contrib_for_a_recurrent_model(monkeypatch, tmp_path):
+    import importlib.util
+    import json
+
+    from multi_agent_warehouse import agents
+
+    model = tmp_path / "m.zip"
+    model.write_bytes(b"x")
+    (tmp_path / "m.json").write_text(json.dumps({"algo": "recurrent_ppo"}))
+    monkeypatch.setattr(agents, "MODEL_PATH", model)
+    real = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a: None if name == "sb3_contrib" else real(name, *a),
+    )
+
+    assert "rl" not in agents.available_policies()
+
+    (tmp_path / "m.json").write_text(json.dumps({"algo": "ppo"}))
+
+    assert "rl" in agents.available_policies()
+
+
+def test_train_cli_default_out_is_not_the_shipped_model(monkeypatch):
+    from multi_agent_warehouse import train as train_module
+
+    saved = []
+    monkeypatch.setattr(train_module, "fit", lambda cfg, out, **kw: saved.append((cfg, out)))
+
+    train_module.main(["--steps", "1", "--seed", "0", "--no-bootstrap-truncation"])
+
+    cfg, out = saved[0]
+    assert str(out) == "models/ppo_retrained"
+    assert str(out) != "models/ppo_multi_agent_warehouse"
+    assert cfg.bootstrap_truncation is False
+
+
+def test_fit_sidecar_follows_a_dotted_model_name(tmp_path):
+    from multi_agent_warehouse.train import TrainConfig, fit
+
+    path = fit(TrainConfig(total_steps=512, n_envs=2), tmp_path / "ppo_v1.5k")
+
+    assert path == tmp_path / "ppo_v1.5k"
+    assert path.exists()
+    assert (tmp_path / "ppo_v1.json").exists()

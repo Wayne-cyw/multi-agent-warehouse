@@ -119,7 +119,16 @@ BASELINE_COLUMNS = (
     "n_episodes",
 )
 BASELINES = {"random": RandomPolicy, "greedy": GreedyPolicy}
-PACKAGES = ("numpy", "torch", "stable_baselines3", "supersuit", "gymnasium", "pettingzoo")
+PACKAGES = (
+    "numpy",
+    "torch",
+    "stable_baselines3",
+    "sb3_contrib",
+    "supersuit",
+    "gymnasium",
+    "pettingzoo",
+    "matplotlib",
+)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -506,6 +515,8 @@ def select_and_test(
     baseline: str | None = "base",
     committed: Path | None = None,
     n_episodes: int = 100,
+    validation_base: int | None = None,
+    test_base: int | None = None,
 ) -> dict[str, Any]:
     """Pick the best seed of `variant` on a validation block and score it on a fresh test block.
 
@@ -514,6 +525,9 @@ def select_and_test(
     validation deliveries is selected; its test-block score is the honest estimate, because no
     choice was made on that block. Every seed of `variant` and `baseline`, and the `committed`
     model if given, is also scored on the test block, and `final.csv` in `exp_dir` lists them all.
+
+    Explicit `validation_base` and `test_base` (both or neither) replace the random draw; they
+    must still be disjoint. `final.json` records the two bases.
 
     The result has `selected_seed`, `final_path`, the block bases, `test` (the selected seed's
     scores), `seed_spread` (std over the variant's seeds' test deliveries), `baseline_mean`,
@@ -531,7 +545,20 @@ def select_and_test(
         range(0, 1000),
         *(range(int(s), int(s) + 1) for s in manifest["train_seeds"]),
     ]
-    val_base, test_base = _draw_blocks(n_episodes, avoid)
+    if validation_base is None and test_base is None:
+        validation_base, test_base = _draw_blocks(n_episodes, avoid)
+    elif validation_base is None or test_base is None:
+        raise ValueError("give both validation_base and test_base, or neither")
+    else:
+        blocks = [range(b, b + n_episodes) for b in (validation_base, test_base)]
+        if any(
+            not (x.start >= y.stop or y.start >= x.stop)
+            for i, x in enumerate([*blocks, *avoid])
+            for y in [*blocks, *avoid][i + 1 :]
+            if x in blocks or y in blocks
+        ):
+            raise ValueError("the given blocks overlap each other, the eval block or a train seed")
+    val_base = validation_base
     val_seeds = range(val_base, val_base + n_episodes)
     test_seeds = range(test_base, test_base + n_episodes)
 
@@ -577,6 +604,18 @@ def select_and_test(
                 "test_collisions": repr(committed_score["collisions"]),
             }
         )
+    (exp_dir / "final.json").write_text(
+        json.dumps(
+            {
+                "variant": variant,
+                "validation_base": val_base,
+                "test_base": test_base,
+                "n_episodes": n_episodes,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     with open(exp_dir / "final.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FINAL_COLUMNS)
         writer.writeheader()
@@ -624,6 +663,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--steps", type=int, default=None, help="override every variant's steps")
     run.add_argument("--train-seeds", type=_int_list, default=None, help="e.g. 1,2; else random")
     run.add_argument("--eval-seed-base", type=int, default=None, help="random if omitted")
+    run.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
     gen = commands.add_parser("generalise", help="evaluate variants across layouts and counts")
     gen.add_argument("--name", required=True)
     gen.add_argument("--variants", required=True, help="comma-separated")
@@ -636,6 +676,8 @@ def main(argv: list[str] | None = None) -> None:
     sel.add_argument("--variant", required=True)
     sel.add_argument("--baseline", default="base")
     sel.add_argument("--committed", type=Path, default=None, help="model zip to compare against")
+    sel.add_argument("--validation-base", type=int, default=None, help="random if omitted")
+    sel.add_argument("--test-base", type=int, default=None, help="random if omitted")
     sel.add_argument("--out-root", type=Path, default=Path("runs/experiments"))
     plot = commands.add_parser("plot", help="write figures and report.md for an experiment")
     plot.add_argument("--name", required=True)
@@ -653,7 +695,12 @@ def main(argv: list[str] | None = None) -> None:
             print(f"evaluated {variant}")
     elif args.command == "select":
         result = select_and_test(
-            args.out_root / args.name, args.variant, args.baseline, args.committed
+            args.out_root / args.name,
+            args.variant,
+            args.baseline,
+            args.committed,
+            validation_base=args.validation_base,
+            test_base=args.test_base,
         )
         print(json.dumps(result, indent=2, default=str))
     elif args.command == "plot":
@@ -669,6 +716,7 @@ def main(argv: list[str] | None = None) -> None:
             total_steps=args.steps,
             train_seeds=args.train_seeds,
             eval_seed_base=args.eval_seed_base,
+            out_root=args.out_root,
         )
         print(f"results in {directory}")
 

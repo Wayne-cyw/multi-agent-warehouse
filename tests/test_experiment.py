@@ -144,9 +144,11 @@ def test_manifest_records_commit_and_versions(finished, tmp_path, monkeypatch):
         "numpy",
         "torch",
         "stable_baselines3",
+        "sb3_contrib",
         "supersuit",
         "gymnasium",
         "pettingzoo",
+        "matplotlib",
     }
     assert manifest["versions"]["stable_baselines3"] != "not installed"
     legacy = manifest["variants"]["legacy"]
@@ -387,6 +389,7 @@ def test_cli_run_passes_its_arguments(monkeypatch):
             "total_steps": 3072,
             "train_seeds": [1, 2],
             "eval_seed_base": 20000,
+            "out_root": Path("runs/experiments"),
         }
     ]
 
@@ -499,3 +502,31 @@ def test_select_and_test_scores_the_committed_model_and_applies_the_rule(finishe
         result["baseline_mean"], result["committed"]["deliveries"]
     )
     assert result["replace"] == (gain > result["seed_spread"])
+
+
+def test_select_and_test_records_blocks_and_accepts_explicit_ones(finished):
+    result = experiment.select_and_test(
+        finished,
+        "legacy",
+        baseline=None,
+        n_episodes=2,
+        validation_base=20_000,
+        test_base=30_000,
+    )
+
+    assert (result["validation_base"], result["test_base"]) == (20_000, 30_000)
+    recorded = json.loads((finished / "final.json").read_text())
+    assert (recorded["validation_base"], recorded["test_base"]) == (20_000, 30_000)
+    with pytest.raises(ValueError, match="overlap"):
+        experiment.select_and_test(
+            finished,
+            "legacy",
+            baseline=None,
+            n_episodes=2,
+            validation_base=20_000,
+            test_base=20_001,
+        )
+
+
+def test_manifest_versions_include_sb3_contrib_and_matplotlib():
+    assert {"sb3_contrib", "matplotlib"} <= set(experiment._versions())
