@@ -323,6 +323,40 @@ def test_rich_obs_variant_sets_observation_kwarg():
     assert dataclasses.replace(rich, env_kwargs=base.env_kwargs) == base
 
 
+RECURRENT_CHANGES = {
+    "lstm": {"algo": "recurrent_ppo"},
+    "rich_lstm": {"algo": "recurrent_ppo", "env_kwargs.observation": "rich"},
+}
+
+
+def test_recurrent_variants_differ_from_base_as_specified():
+    base = _flatten(experiment.VARIANTS["base"])
+    for name, changes in RECURRENT_CHANGES.items():
+        flat = _flatten(experiment.VARIANTS[name])
+        differing = {
+            k
+            for k in base.keys() | flat.keys()
+            if base.get(k, "<absent>") != flat.get(k, "<absent>")
+        }
+        assert differing == set(changes), name
+        assert {k: flat[k] for k in changes} == changes, name
+
+
+def test_evaluate_run_loads_a_recurrent_run(tmp_path):
+    pytest.importorskip("sb3_contrib")
+    from multi_agent_warehouse.train import TrainConfig, fit
+
+    cfg = TrainConfig(
+        algo="recurrent_ppo", n_envs=2, total_steps=1536, checkpoint_steps=(768,), seed=3
+    )
+    fit(cfg, out=tmp_path / "final", log_dir=tmp_path)
+
+    rows = experiment.evaluate_run(tmp_path, cfg, eval_seeds=[5000], modes=("sampled",))
+
+    assert [row["timesteps"] for row in rows] == [768, 1536]
+    assert all(row["n_episodes"] == 1 for row in rows)
+
+
 def test_cli_run_passes_its_arguments(monkeypatch):
     calls = []
     monkeypatch.setattr(experiment, "run_experiment", lambda **kwargs: calls.append(kwargs))

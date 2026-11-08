@@ -29,7 +29,7 @@ from multi_agent_warehouse.agents import GreedyPolicy, RandomPolicy, RLPolicy
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS
 from multi_agent_warehouse.evaluate import evaluate_episodes, summarise
 from multi_agent_warehouse.seeds import draw_eval_base, draw_seeds
-from multi_agent_warehouse.train import TrainConfig, fit
+from multi_agent_warehouse.train import TrainConfig, fit, model_class
 
 VARIANTS: dict[str, TrainConfig] = {
     "legacy": TrainConfig(
@@ -65,6 +65,10 @@ VARIANTS.update(
         "coll_0.3": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -0.3}),
         "coll_1.0": dataclasses.replace(_BASE, env_kwargs={"collision_penalty": -1.0}),
         "rich_obs": dataclasses.replace(_BASE, env_kwargs={"observation": "rich"}),
+        "lstm": dataclasses.replace(_BASE, algo="recurrent_ppo"),
+        "rich_lstm": dataclasses.replace(
+            _BASE, algo="recurrent_ppo", env_kwargs={"observation": "rich"}
+        ),
     }
 )
 
@@ -103,20 +107,19 @@ def _stat_cells(stats: dict[str, tuple[float, float]]) -> dict[str, str]:
     }
 
 
-def _checkpoints(run_dir: Path) -> list[tuple[int, Path]]:
+def _checkpoints(run_dir: Path, algo: str) -> list[tuple[int, Path]]:
     """`(timesteps, path)` of every checkpoint and `final.zip` in `run_dir`, oldest first.
 
-    `final.zip` is labelled with its model's real timestep count and dropped when a checkpoint
-    already has that count, so each policy is listed once.
+    `final.zip` is loaded as an `algo` model, labelled with its real timestep count and dropped
+    when a checkpoint already has that count, so each policy is listed once.
     """
-    from stable_baselines3 import PPO
-
     found = {
         int(path.stem.removeprefix("step_")): path
         for path in (run_dir / "checkpoints").glob("step_*.zip")
     }
     final = run_dir / "final.zip"
-    found.setdefault(int(PPO.load(final, device="cpu").num_timesteps), final)
+    timesteps = model_class(algo).load(final, device="cpu").num_timesteps
+    found.setdefault(int(timesteps), final)
     return sorted(found.items())
 
 
@@ -130,7 +133,7 @@ def _iter_eval_rows(
     """Yield one row per checkpoint and mode of `run_dir`, leaving out `(timesteps, mode)` in
     `skip`; see `evaluate_run`.
     """
-    for timesteps, path in _checkpoints(run_dir):
+    for timesteps, path in _checkpoints(run_dir, cfg.algo):
         for mode in modes:
             if (timesteps, mode) in skip:
                 continue

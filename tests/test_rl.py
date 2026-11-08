@@ -93,8 +93,14 @@ def test_train_config_roundtrips_through_json():
 def test_train_config_rejects_unknown_algo():
     from multi_agent_warehouse.train import TrainConfig
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="recurrent_ppo"):
         TrainConfig(algo="dqn")
+
+
+def test_train_config_accepts_recurrent_ppo():
+    from multi_agent_warehouse.train import TrainConfig
+
+    assert TrainConfig(algo="recurrent_ppo").algo == "recurrent_ppo"
 
 
 def test_fit_writes_checkpoints_progress_and_config(tmp_path):
@@ -249,7 +255,7 @@ def test_deterministic_rl_policy_repeats_actions(tmp_path):
 def test_rl_policy_rejects_unknown_algo(tmp_path):
     from multi_agent_warehouse.agents import RLPolicy
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="recurrent_ppo"):
         RLPolicy(tmp_path / "missing.zip", algo="dqn")
 
 
@@ -286,3 +292,143 @@ def test_rich_observation_model_trains_and_acts(tmp_path):
     with pytest.raises(ValueError, match="expects 14"):
         policy.act(basic_obs)
     assert np.all([o.shape == (14,) for o in rich_obs.values()])
+
+
+def _recurrent_config(**kwargs):
+    from multi_agent_warehouse.train import TrainConfig
+
+    return TrainConfig(**{"algo": "recurrent_ppo", "n_envs": 2, "total_steps": 2048, **kwargs})
+
+
+@pytest.fixture(scope="module")
+def recurrent_model(tmp_path_factory):
+    pytest.importorskip("sb3_contrib")
+    from multi_agent_warehouse.train import fit
+
+    return fit(_recurrent_config(), out=tmp_path_factory.mktemp("lstm") / "m")
+
+
+def test_recurrent_fit_saves_a_loadable_model(tmp_path):
+    pytest.importorskip("sb3_contrib")
+    import csv
+
+    from sb3_contrib import RecurrentPPO
+
+    from multi_agent_warehouse.train import fit
+
+    cfg = _recurrent_config(gamma=0.95, checkpoint_steps=(1024,))
+
+    path = fit(cfg, out=tmp_path / "final", log_dir=tmp_path)
+
+    model = RecurrentPPO.load(path, device="cpu")
+    assert isinstance(model, RecurrentPPO)
+    assert model.num_timesteps >= 2048
+    assert (model.n_steps, model.batch_size, model.gamma) == (128, 256, 0.95)
+    assert len(list((tmp_path / "checkpoints").glob("step_*.zip"))) == 1
+    with open(tmp_path / "progress.csv", newline="") as f:
+        assert "train/value_loss" in csv.DictReader(f).fieldnames
+
+
+def test_recurrent_same_seed_gives_identical_weights(tmp_path):
+    pytest.importorskip("sb3_contrib")
+    import torch
+    from sb3_contrib import RecurrentPPO
+
+    from multi_agent_warehouse.train import fit
+
+    weights = []
+    for name in ("a", "b"):
+        path = fit(_recurrent_config(seed=7, total_steps=1024), out=tmp_path / name)
+        weights.append(RecurrentPPO.load(path, device="cpu").policy.state_dict())
+
+    assert weights[0].keys() == weights[1].keys()
+    assert all(torch.equal(weights[0][k], weights[1][k]) for k in weights[0])
+
+
+def _lstm_state(policy):
+    hidden, cell = policy._state
+    return hidden.copy(), cell.copy()
+
+
+def test_recurrent_policy_state_changes_between_steps(recurrent_model):
+    import numpy as np
+
+    from multi_agent_warehouse.agents import RLPolicy
+    from multi_agent_warehouse.env import MultiAgentWarehouseEnv
+
+    env = MultiAgentWarehouseEnv()
+    observations, _ = env.reset(seed=0)
+    policy = RLPolicy(recurrent_model, algo="recurrent_ppo")
+    policy.reset(0)
+
+    actions = policy.act(observations)
+    first = _lstm_state(policy)
+    observations, *_ = env.step(actions)
+    policy.act(observations)
+    second = _lstm_state(policy)
+
+    assert set(actions) == set(observations)
+    assert first[0].shape == (1, 3, 256)
+    assert not np.array_equal(first[0], second[0])
+
+
+def test_recurrent_state_clears_on_reset(recurrent_model):
+    import numpy as np
+
+    from multi_agent_warehouse.agents import RLPolicy
+    from multi_agent_warehouse.env import MultiAgentWarehouseEnv
+
+    env = MultiAgentWarehouseEnv()
+    used = RLPolicy(recurrent_model, deterministic=True, algo="recurrent_ppo")
+    observations, _ = env.reset(seed=0)
+    used.reset(0)
+    for _ in range(5):
+        observations, *_ = env.step(used.act(observations))
+
+    observations, _ = env.reset(seed=1)
+    used.reset(0)
+    fresh = RLPolicy(recurrent_model, deterministic=True, algo="recurrent_ppo")
+    fresh.reset(0)
+
+    assert used.act(observations) == fresh.act(observations)
+    assert all(
+        np.array_equal(a, b) for a, b in zip(_lstm_state(used), _lstm_state(fresh), strict=True)
+    )
+
+
+def test_recurrent_policy_handles_robot_count_change_after_reset(recurrent_model):
+    from multi_agent_warehouse.agents import RLPolicy
+    from multi_agent_warehouse.env import MultiAgentWarehouseEnv
+
+    policy = RLPolicy(recurrent_model, algo="recurrent_ppo")
+    for n_robots in (3, 4, 2):
+        env = MultiAgentWarehouseEnv(n_robots=n_robots)
+        observations, _ = env.reset(seed=n_robots)
+        policy.reset(n_robots)
+        for _ in range(3):
+            actions = policy.act(observations)
+            assert set(actions) == set(observations)
+            observations, *_ = env.step(actions)
+        assert _lstm_state(policy)[0].shape == (1, n_robots, 256)
+
+
+def test_recurrent_policy_rejects_wrong_observation_size(recurrent_model):
+    import numpy as np
+
+    from multi_agent_warehouse.agents import RLPolicy
+
+    policy = RLPolicy(recurrent_model, algo="recurrent_ppo")
+
+    with pytest.raises(ValueError, match="expects 8"):
+        policy.act({"robot_0": np.zeros(14, dtype=np.float32)})
+
+
+def test_recurrent_ppo_without_sb3_contrib_names_the_rl_extra(monkeypatch):
+    import sys
+
+    from multi_agent_warehouse.train import model_class
+
+    monkeypatch.setitem(sys.modules, "sb3_contrib", None)
+
+    with pytest.raises(ImportError, match="rl"):
+        model_class("recurrent_ppo")

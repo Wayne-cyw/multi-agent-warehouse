@@ -1,7 +1,9 @@
 """Train one shared PPO policy for all robots (parameter sharing through SuperSuit).
 
-Stable-Baselines3, SuperSuit and torch come from the optional `rl` extra, so they are imported
-inside functions and importing this module does not need them.
+The policy is either a feed-forward PPO network or, with `algo="recurrent_ppo"`, sb3-contrib's
+`RecurrentPPO` with an LSTM. Stable-Baselines3, sb3-contrib, SuperSuit and torch come from the
+optional `rl` extra, so they are imported inside functions and importing this module does not need
+them.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from typing import Any
 from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 from multi_agent_warehouse.seeds import draw_seeds
 
-ALGOS = ("ppo",)
+ALGOS = ("ppo", "recurrent_ppo")
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,11 @@ class TrainConfig:
         gamma: The discount factor.
         ent_coef: The entropy bonus coefficient.
         net_arch: The hidden layer widths of both the policy and the value network.
-        algo: The training algorithm; only "ppo" for now.
+        algo: The training algorithm: "ppo" for a feed-forward `MlpPolicy`, or "recurrent_ppo" for
+            sb3-contrib's `RecurrentPPO` with an `MlpLstmPolicy` (SB3's default single 256-unit
+            LSTM, followed by `net_arch`). Its minibatches are `batch_size` consecutive samples
+            of the env-major buffer, cut into sequences at sub-environment and episode
+            boundaries, so any `batch_size` works and the default 256 is kept.
         bootstrap_truncation: Whether time-limit truncations are bootstrapped from the value
             function instead of being treated as terminal.
         robot_counts: The robot counts cycled over the warehouse copies; copy i has
@@ -98,6 +104,27 @@ class TrainConfig:
         if "env_kwargs" in values:
             values["env_kwargs"] = dict(values["env_kwargs"])
         return cls(**values)
+
+
+def model_class(algo: str) -> Any:
+    """Return the Stable-Baselines3 class that trains and loads models of `algo`.
+
+    Raises ValueError for an unknown `algo`, and ImportError naming the `rl` extra when
+    "recurrent_ppo" is asked for without sb3-contrib installed.
+    """
+    if algo not in ALGOS:
+        raise ValueError(f"algo must be one of {ALGOS}, got {algo!r}")
+    if algo == "ppo":
+        from stable_baselines3 import PPO
+
+        return PPO
+    try:
+        from sb3_contrib import RecurrentPPO
+    except ImportError as error:
+        raise ImportError(
+            "algo 'recurrent_ppo' needs sb3-contrib; install the `rl` extra: pip install -e '.[rl]'"
+        ) from error
+    return RecurrentPPO
 
 
 def _make_vec_env(cfg: TrainConfig) -> Any:
@@ -214,16 +241,18 @@ def fit(cfg: TrainConfig, out: Path, log_dir: Path | None = None, verbose: int =
     """Train an agent as `cfg` describes, save it to `out` and return the saved zip's path.
 
     With `log_dir`, also write `progress.csv`, `config.json` and `checkpoints/step_<n:09d>.zip`
-    there.
+    there. Both algorithms bootstrap time-limit truncations from the value function unless
+    `cfg.bootstrap_truncation` is off; `RecurrentPPO` evaluates the terminal observation with that
+    sub-environment's current critic LSTM state.
     """
-    from stable_baselines3 import PPO
     from stable_baselines3.common.logger import configure
 
+    algo_class = model_class(cfg.algo)
     out = Path(out)
     vec_env = _make_vec_env(cfg)
     try:
-        model = PPO(
-            "MlpPolicy",
+        model = algo_class(
+            "MlpPolicy" if cfg.algo == "ppo" else "MlpLstmPolicy",
             vec_env,
             n_steps=cfg.n_steps,
             batch_size=cfg.batch_size,
