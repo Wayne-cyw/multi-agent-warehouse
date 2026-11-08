@@ -90,8 +90,7 @@ class TrainConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TrainConfig:
-        """Rebuild a config from `to_dict` output, also after a JSON roundtrip turned tuples into
-        lists."""
+        """Rebuild a config from `to_dict` output, even after JSON turned its tuples into lists."""
         values = dict(data)
         for name in ("net_arch", "robot_counts", "checkpoint_steps"):
             if name in values:
@@ -133,19 +132,17 @@ def _make_vec_env(cfg: TrainConfig) -> Any:
     set_random_seed(cfg.seed)
     vec_env.venv.reset(seed=cfg.seed)
 
-    if not cfg.bootstrap_truncation:
-        vec_env = _drop_truncation_flag(vec_env)
-
-    # ConcatVecEnv has no `get_attr`, so SB3 warns that render_mode is unset; training never
-    # renders, so None is right.
+    # ConcatVecEnv has no `get_attr`, so every SB3 wrapper warns that render_mode is unset;
+    # training never renders, so None is right.
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="The `render_mode` attribute is not defined")
+        if not cfg.bootstrap_truncation:
+            vec_env = _drop_truncation_flag(vec_env)
         return VecMonitor(vec_env)
 
 
 def _drop_truncation_flag(vec_env: Any) -> Any:
-    """Wrap `vec_env` so its infos lack "TimeLimit.truncated" and SB3 treats time limits as
-    terminal."""
+    """Wrap `vec_env` so SB3 treats time limits as terminal, by dropping the truncation flag."""
     from stable_baselines3.common.vec_env import VecEnvWrapper
 
     class _DropTruncation(VecEnvWrapper):
@@ -177,7 +174,9 @@ def _checkpoint_callback(steps: tuple[int, ...], directory: Path) -> Any:
         """Save the model at the first rollout end at or after each requested timestep.
 
         A checkpoint is named by the real timestep count, `step_<timesteps:09d>.zip`, and several
-        requested steps passed in one rollout share one checkpoint.
+        requested steps passed in one rollout share one checkpoint. SB3 calls `_on_rollout_end`
+        before that rollout's PPO update, so a checkpoint holds the policy that collected the
+        rollout, not the one updated from it.
 
         Attributes:
             pending: The requested steps not reached yet, in ascending order.
@@ -222,33 +221,34 @@ def fit(cfg: TrainConfig, out: Path, log_dir: Path | None = None, verbose: int =
 
     out = Path(out)
     vec_env = _make_vec_env(cfg)
-    model = PPO(
-        "MlpPolicy",
-        vec_env,
-        n_steps=cfg.n_steps,
-        batch_size=cfg.batch_size,
-        learning_rate=cfg.learning_rate,
-        gamma=cfg.gamma,
-        ent_coef=cfg.ent_coef,
-        policy_kwargs={"net_arch": list(cfg.net_arch)},
-        device="cpu",
-        verbose=verbose,
-    )
+    try:
+        model = PPO(
+            "MlpPolicy",
+            vec_env,
+            n_steps=cfg.n_steps,
+            batch_size=cfg.batch_size,
+            learning_rate=cfg.learning_rate,
+            gamma=cfg.gamma,
+            ent_coef=cfg.ent_coef,
+            policy_kwargs={"net_arch": list(cfg.net_arch)},
+            device="cpu",
+            verbose=verbose,
+        )
 
-    callback = None
-    if log_dir is not None:
-        log_dir = Path(log_dir)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
-        model.set_logger(configure(str(log_dir), ["csv"]))
-        if cfg.checkpoint_steps:
-            callback = _checkpoint_callback(cfg.checkpoint_steps, log_dir / "checkpoints")
+        callback = None
+        if log_dir is not None:
+            log_dir = Path(log_dir)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
+            model.set_logger(configure(str(log_dir), ["csv"]))
+            if cfg.checkpoint_steps:
+                callback = _checkpoint_callback(cfg.checkpoint_steps, log_dir / "checkpoints")
 
-    model.learn(cfg.total_steps, callback=callback)
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    model.save(out)
-    vec_env.close()
+        model.learn(cfg.total_steps, callback=callback)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        model.save(out)
+    finally:
+        vec_env.close()
     return out.with_suffix(".zip")
 
 

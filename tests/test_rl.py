@@ -155,7 +155,9 @@ def test_different_seeds_give_different_weights(tmp_path):
 def test_hyperparameters_reach_the_model(tmp_path):
     from multi_agent_warehouse.train import TrainConfig, fit
 
-    cfg = TrainConfig(n_envs=1, total_steps=256, ent_coef=0.01, gamma=0.95, net_arch=(32, 32))
+    cfg = TrainConfig(
+        n_envs=1, total_steps=256, batch_size=128, ent_coef=0.01, gamma=0.95, net_arch=(32, 32)
+    )
 
     model = PPO.load(fit(cfg, out=tmp_path / "m"), device="cpu")
 
