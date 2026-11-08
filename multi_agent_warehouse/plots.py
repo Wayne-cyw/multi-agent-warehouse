@@ -26,7 +26,9 @@ METRICS = {
     "deliveries": "deliveries per episode",
     "collisions": "collisions per episode",
 }
+BASELINE_COLOURS = {"random": "#888888", "greedy": "#444444"}
 PALETTE = ("#2a6fb0", "#e08a1e", "#3a9d5d", "#b4414f", "#7e5bb5", "#4aa3a8")
+STEPS_COLUMN = "time/total_timesteps"
 DIAGNOSTICS = (
     ("rollout/ep_rew_mean", "episode reward (training mean)"),
     ("train/entropy_loss", "entropy loss"),
@@ -172,7 +174,8 @@ def aggregate_progress(
     grid = max(cleaned, key=lambda xy: len(xy[0]))[0]
     stacked = np.vstack([np.interp(grid, x, y, left=np.nan, right=np.nan) for x, y in cleaned])
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN columns stay NaN
+        # Grid points where every seed is missing stay NaN.
+        warnings.simplefilter("ignore", RuntimeWarning)
         return grid, np.nanmean(stacked, axis=0)
 
 
@@ -222,17 +225,17 @@ def _set_timestep_axis(ax: Any, xs: Sequence[float]) -> None:
 
 def _draw_baselines(ax: Any, baselines: dict[str, dict[str, float]], metric: str) -> None:
     """Dashed horizontal lines for the random and greedy baselines, labelled with their values."""
-    for (policy, stats), colour in zip(baselines.items(), ("#888888", "#444444"), strict=False):
+    for policy, stats in baselines.items():
         ax.axhline(
             stats[metric],
             linestyle="--",
             linewidth=1.2,
-            color=colour,
+            color=BASELINE_COLOURS.get(policy, "#666666"),
             label=f"{policy} baseline ({stats[metric]:.2f})",
         )
 
 
-def plot_learning_curve(exp_dir: Path, metric: str, out: Path, mode: str = "sampled") -> Path:
+def figure_learning_curve(exp_dir: Path, metric: str, mode: str = "sampled") -> Any:
     """Evaluation metric against timesteps: a line per seed, the variant mean and its 95% band.
 
     Seeds are aggregated per checkpoint index (see `aggregate_curve`). Dashed lines mark the
@@ -269,10 +272,15 @@ def plot_learning_curve(exp_dir: Path, metric: str, out: Path, mode: str = "samp
     ax.set_ylabel(METRICS[metric])
     ax.set_title(f"{Path(exp_dir).name}: {METRICS[metric]} ({mode} policy)")
     ax.legend(loc="best", fontsize=8)
-    return _finish(fig, out)
+    return fig
 
 
-def plot_sampled_vs_deterministic(exp_dir: Path, variant: str, out: Path) -> Path:
+def plot_learning_curve(exp_dir: Path, metric: str, out: Path, mode: str = "sampled") -> Path:
+    """Draw `figure_learning_curve` and save it to `out`; see that function."""
+    return _finish(figure_learning_curve(exp_dir, metric, mode), out)
+
+
+def figure_sampled_vs_deterministic(exp_dir: Path, variant: str) -> Any:
     """Deliveries of one variant for the sampled and deterministic policy, mean and 95% band.
 
     Raises ValueError naming the missing mode when `eval_curve.csv` lacks one.
@@ -304,10 +312,15 @@ def plot_sampled_vs_deterministic(exp_dir: Path, variant: str, out: Path) -> Pat
     ax.set_ylabel(METRICS["deliveries"])
     ax.set_title(f"{Path(exp_dir).name}: {variant}, sampled vs deterministic policy")
     ax.legend(loc="best", fontsize=8)
-    return _finish(fig, out)
+    return fig
 
 
-def plot_training_diagnostics(exp_dir: Path, variant: str, out: Path) -> Path:
+def plot_sampled_vs_deterministic(exp_dir: Path, variant: str, out: Path) -> Path:
+    """Draw `figure_sampled_vs_deterministic` and save it to `out`; see that function."""
+    return _finish(figure_sampled_vs_deterministic(exp_dir, variant), out)
+
+
+def figure_training_diagnostics(exp_dir: Path, variant: str) -> Any:
     """A 2x2 grid of training reward, entropy loss, value loss and explained variance.
 
     Each panel has a light line per seed and the mean over seeds in bold. Raises
@@ -316,25 +329,35 @@ def plot_training_diagnostics(exp_dir: Path, variant: str, out: Path) -> Path:
     runs = load_progress(exp_dir, variant)
     if not runs:
         raise FileNotFoundError(f"no progress.csv for variant {variant!r} in {exp_dir}")
+    if any(STEPS_COLUMN not in run for run in runs.values()):
+        raise ValueError(f"progress.csv of variant {variant!r} lacks the {STEPS_COLUMN} column")
     plt = _pyplot()
     fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True)
     for ax, (column, title) in zip(axes.flat, DIAGNOSTICS, strict=False):
-        series = [(r["time/total_timesteps"], r[column]) for r in runs.values() if column in r]
+        series = [(r[STEPS_COLUMN], r[column]) for r in runs.values() if column in r]
+        ax.set_title(title, fontsize=10)
+        ax.grid(alpha=0.25)
+        if not series:
+            ax.text(0.5, 0.5, "not logged", ha="center", va="center", transform=ax.transAxes)
+            continue
         for steps, values in series:
             ax.plot(steps, values, color=PALETTE[0], alpha=0.25, linewidth=0.8)
         grid, mean = aggregate_progress(series)
         ax.plot(grid, mean, color=PALETTE[0], linewidth=2.2, label=f"mean of {len(series)} seeds")
-        ax.set_title(title, fontsize=10)
-        ax.grid(alpha=0.25)
         ax.legend(loc="best", fontsize=8)
     for ax in axes[1]:
         ax.set_xlabel("training timesteps")
     fig.suptitle(f"{Path(exp_dir).name}: {variant} training diagnostics")
     fig.tight_layout()
-    return _finish(fig, out)
+    return fig
 
 
-def plot_variant_comparison(exp_dir: Path, out: Path) -> Path:
+def plot_training_diagnostics(exp_dir: Path, variant: str, out: Path) -> Path:
+    """Draw `figure_training_diagnostics` and save it to `out`; see that function."""
+    return _finish(figure_training_diagnostics(exp_dir, variant), out)
+
+
+def figure_variant_comparison(exp_dir: Path) -> Any:
     """Final-checkpoint sampled deliveries per variant, best first, error bars = seed std."""
     ranked = rank_variants(load_curve(exp_dir), "sampled")
     if not ranked:
@@ -342,7 +365,8 @@ def plot_variant_comparison(exp_dir: Path, out: Path) -> Path:
     plt = _pyplot()
     fig, ax = plt.subplots(figsize=(max(4.0, 1.6 * len(ranked) + 2.5), 5))
     names = [name for name, *_ in ranked]
-    order = variants_of(load_curve(exp_dir))  # same colour as in the other figures
+    # Colour by variant order, as in the other figures.
+    order = variants_of(load_curve(exp_dir))
     colours = [_colour(order, name) for name in names]
     means, stds = [m for _, m, _, _ in ranked], [s for _, _, s, _ in ranked]
     ax.bar(names, means, yerr=stds, capsize=6, color=colours, alpha=0.85)
@@ -353,10 +377,15 @@ def plot_variant_comparison(exp_dir: Path, out: Path) -> Path:
     ax.set_ylabel(METRICS["deliveries"] + " (final checkpoint)")
     ax.set_title(f"{Path(exp_dir).name}: final deliveries by variant (mean, error bar = seed std)")
     ax.grid(axis="y", alpha=0.25)
-    return _finish(fig, out)
+    return fig
 
 
-def plot_tradeoff(exp_dir: Path, out: Path) -> Path:
+def plot_variant_comparison(exp_dir: Path, out: Path) -> Path:
+    """Draw `figure_variant_comparison` and save it to `out`; see that function."""
+    return _finish(figure_variant_comparison(exp_dir), out)
+
+
+def figure_tradeoff(exp_dir: Path) -> Any:
     """Final deliveries (y) against collisions (x): a dot per variant and seed, plus baselines."""
     rows = load_curve(exp_dir)
     variants = variants_of(rows)
@@ -381,7 +410,7 @@ def plot_tradeoff(exp_dir: Path, out: Path) -> Path:
             stats["deliveries"],
             marker=marker,
             s=110,
-            color="#444444",
+            color=BASELINE_COLOURS.get(policy, "#666666"),
             label=f"{policy} baseline",
         )
     ax.set_xlabel(METRICS["collisions"])
@@ -389,7 +418,12 @@ def plot_tradeoff(exp_dir: Path, out: Path) -> Path:
     ax.set_title(f"{Path(exp_dir).name}: deliveries vs collisions (final checkpoint)")
     ax.grid(alpha=0.25)
     ax.legend(loc="best", fontsize=8)
-    return _finish(fig, out)
+    return fig
+
+
+def plot_tradeoff(exp_dir: Path, out: Path) -> Path:
+    """Draw `figure_tradeoff` and save it to `out`; see that function."""
+    return _finish(figure_tradeoff(exp_dir), out)
 
 
 def _mean_std(values: Sequence[float]) -> str:
@@ -474,9 +508,10 @@ def make_report(exp_dir: Path) -> Path:
 def plot_all(exp_dir: Path) -> list[Path]:
     """Write every applicable figure into `<exp_dir>/plots/`, then the report.
 
-    Figures whose input is absent (diagnostics without `progress.csv`, a mode that was not
-    evaluated) are skipped. Returns the figure paths followed by the report path. Raises
-    FileNotFoundError when `eval_curve.csv` has no rows.
+    Figures whose input is absent (diagnostics without `progress.csv`, a variant without both
+    modes) are skipped by checking the inputs first; any error while drawing propagates.
+    Returns the figure paths followed by the report path.
+    Raises FileNotFoundError when `eval_curve.csv` has no rows.
     """
     exp_dir = Path(exp_dir)
     rows = load_curve(exp_dir)
@@ -488,14 +523,17 @@ def plot_all(exp_dir: Path) -> list[Path]:
         plot_learning_curve(exp_dir, "collisions", plots / "learning_curve_collisions.png"),
     ]
     for variant in variants_of(rows):
-        for name, draw in (
-            ("sampled_vs_deterministic", plot_sampled_vs_deterministic),
-            ("diagnostics", plot_training_diagnostics),
-        ):
-            try:
-                written.append(draw(exp_dir, variant, plots / f"{name}_{variant}.png"))
-            except (ValueError, FileNotFoundError):
-                continue
+        modes = {row["mode"] for row in rows if row["variant"] == variant}
+        if len(modes) == 2:
+            written.append(
+                plot_sampled_vs_deterministic(
+                    exp_dir, variant, plots / f"sampled_vs_deterministic_{variant}.png"
+                )
+            )
+        if load_progress(exp_dir, variant):
+            written.append(
+                plot_training_diagnostics(exp_dir, variant, plots / f"diagnostics_{variant}.png")
+            )
     written.append(plot_variant_comparison(exp_dir, plots / "variant_comparison.png"))
     written.append(plot_tradeoff(exp_dir, plots / "tradeoff.png"))
     return [*written, make_report(exp_dir)]

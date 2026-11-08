@@ -77,7 +77,8 @@ def make_experiment(
                 with open(run / "progress.csv", "w", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow([c for c, _ in plots.DIAGNOSTICS] + ["time/total_timesteps"])
-                    writer.writerow(["", "", "", "", 1000])  # first rollout: all blank
+                    # The first rollout row is all blank.
+                    writer.writerow(["", "", "", "", 1000])
                     writer.writerow(["0.5", "-1.0", "0.3", "0.1", 2000])
                     writer.writerow(["1.5", "-0.8", "0.2", "0.4", 3000 + seed])
     return exp
@@ -153,7 +154,8 @@ def test_learning_curve_with_one_seed_and_one_checkpoint(tmp_path):
     pytest.importorskip("matplotlib")
     exp = make_experiment(tmp_path, seeds=(7,))
     lines = [r for r in (exp / "eval_curve.csv").read_text().splitlines()]
-    (exp / "eval_curve.csv").write_text("\n".join(lines[:3]) + "\n")  # header + one checkpoint
+    # Header plus one checkpoint row.
+    (exp / "eval_curve.csv").write_text("\n".join(lines[:3]) + "\n")
     assert nonempty(plots.plot_learning_curve(exp, "deliveries", tmp_path / "one.png"))
 
 
@@ -199,7 +201,7 @@ def test_training_diagnostics_without_progress_raises(tmp_path):
 def test_variant_comparison_orders_by_score(tmp_path):
     pytest.importorskip("matplotlib")
     exp = make_experiment(tmp_path, variants=("low", "mid", "high"), seeds=(1, 2, 3))
-    # make "mid" the best variant by editing its rows
+    # Make "mid" the best variant by editing its rows.
     rows = plots.load_curve(exp)
     for row in rows:
         row["mean_deliveries"] += 10 if row["variant"] == "mid" else 0
@@ -207,7 +209,8 @@ def test_variant_comparison_orders_by_score(tmp_path):
     assert [name for name, *_ in ranked][0] == "mid"
     assert [name for name, *_ in ranked] == ["mid", "high", "low"]
     assert ranked[0][3] == 3
-    assert ranked[0][2] == pytest.approx(0.1)  # std of seeds 1..3 at +0.1 each
+    # Seeds 1..3 differ by 0.1 each, so the std is 0.1.
+    assert ranked[0][2] == pytest.approx(0.1)
     assert nonempty(plots.plot_variant_comparison(exp, tmp_path / "vc.png"))
 
 
@@ -285,3 +288,212 @@ def test_plot_subcommand_writes_figures(tmp_path):
     experiment.main(["plot", "--name", "exp", "--out-root", str(tmp_path)])
     assert nonempty(exp / "plots" / "learning_curve_deliveries.png")
     assert nonempty(exp / "report.md")
+
+
+def dashed(ax):
+    """The dashed (baseline) lines of `ax`."""
+    return [line for line in ax.get_lines() if line.get_linestyle() == "--"]
+
+
+def close(fig):
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
+def test_learning_curve_figure_content(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, variants=("legacy", "base"), seeds=(1, 2, 3))
+    fig = plots.figure_learning_curve(exp, "deliveries")
+    ax = fig.axes[0]
+    assert ax.get_xscale() == "log"
+    assert len(dashed(ax)) == 2
+    # 6 thin seed lines + 2 bold means + 2 baselines
+    assert len(ax.get_lines()) == 10
+    assert len(ax.collections) == 2  # one band per variant
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert labels == [
+        "legacy (mean of 3)",
+        "base (mean of 3)",
+        "random baseline (0.50)",
+        "greedy baseline (3.00)",
+    ]
+    assert "deliveries per episode" in ax.get_ylabel()
+    assert "sampled" in ax.get_title() and "exp" in ax.get_title()
+    close(fig)
+
+
+def test_learning_curve_figure_without_baselines_has_no_dashed_lines(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, baselines=False)
+    fig = plots.figure_learning_curve(exp, "collisions")
+    ax = fig.axes[0]
+    assert dashed(ax) == []
+    assert len(ax.get_lines()) == 2 + 1  # two thin seed lines and one mean
+    assert "collisions per episode" in ax.get_ylabel()
+    close(fig)
+
+
+def test_learning_curve_figure_single_seed_has_degenerate_band(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, seeds=(7,))
+    fig = plots.figure_learning_curve(exp, "deliveries")
+    ax = fig.axes[0]
+    mean_line = [ln for ln in ax.get_lines() if ln.get_linewidth() > 2][0]
+    assert list(mean_line.get_xdata()) == list(STEPS)
+    assert len(ax.collections) == 1
+    close(fig)
+
+
+def test_learning_curve_figure_unequal_timesteps_plots_mean_x(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, seeds=(1, 2), jitter=100)
+    fig = plots.figure_learning_curve(exp, "deliveries")
+    mean_line = [ln for ln in fig.axes[0].get_lines() if ln.get_linewidth() > 2][0]
+    assert list(mean_line.get_xdata()) == [s + 150 for s in STEPS]
+    close(fig)
+
+
+def test_sampled_vs_deterministic_figure_content(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path)
+    fig = plots.figure_sampled_vs_deterministic(exp, "base")
+    ax = fig.axes[0]
+    assert len(ax.collections) == 2
+    assert len(dashed(ax)) == 2
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert labels[:2] == ["sampled (mean of 2)", "deterministic (mean of 2)"]
+    close(fig)
+
+
+def test_training_diagnostics_figure_content(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path)
+    fig = plots.figure_training_diagnostics(exp, "base")
+    axes = fig.axes
+    assert len(axes) == 4
+    assert [ax.get_title() for ax in axes] == [title for _, title in plots.DIAGNOSTICS]
+    for ax in axes:
+        # Two light seed lines and one bold mean; the blank first row is missing, not zero.
+        assert len(ax.get_lines()) == 3
+        for line in ax.get_lines():
+            assert not any(y == 0 for y in line.get_ydata())
+            assert not any(math.isnan(y) for y in line.get_ydata()[1:])
+        assert ax.get_legend().get_texts()[0].get_text() == "mean of 2 seeds"
+    close(fig)
+
+
+def test_training_diagnostics_absent_column_is_marked_not_logged(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, seeds=(1,))
+    path = exp / "base" / "seed_1" / "progress.csv"
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    with open(path, "w", newline="") as f:
+        fields = [c for c in rows[0] if c != "train/value_loss"]
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    fig = plots.figure_training_diagnostics(exp, "base")
+    value_ax = fig.axes[2]
+    assert value_ax.get_legend() is None
+    assert [t.get_text() for t in value_ax.texts] == ["not logged"]
+    close(fig)
+
+
+def test_training_diagnostics_missing_timesteps_column_raises_clear_error(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, seeds=(1,))
+    path = exp / "base" / "seed_1" / "progress.csv"
+    path.write_text("rollout/ep_rew_mean\n1.0\n")
+    with pytest.raises(ValueError, match="time/total_timesteps"):
+        plots.plot_training_diagnostics(exp, "base", tmp_path / "d.png")
+
+
+def test_variant_comparison_figure_content(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, variants=("low", "high"), seeds=(1, 2, 3))
+    fig = plots.figure_variant_comparison(exp)
+    ax = fig.axes[0]
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["high", "low"]
+    heights = [bar.get_height() for bar in ax.patches]
+    assert heights[0] > heights[1]
+    assert len(ax.containers) == 2  # bar container plus its error bars
+    assert any("n=3 seeds" in t.get_text() for t in ax.texts)
+    close(fig)
+
+
+def test_variant_comparison_colours_match_learning_curve(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, variants=("low", "high"), seeds=(1, 2))
+    bars = plots.figure_variant_comparison(exp).axes[0].patches
+    curve = plots.figure_learning_curve(exp, "deliveries").axes[0]
+    bold = {
+        ln.get_label().split()[0]: ln.get_color()
+        for ln in curve.get_lines()
+        if ln.get_linewidth() > 2
+    }
+    from matplotlib.colors import to_rgb
+
+    # "high" ranks first and was listed second, so its bar has the second palette colour.
+    assert to_rgb(bars[0].get_facecolor()) == pytest.approx(to_rgb(bold["high"]), abs=1e-6)
+    assert to_rgb(bars[1].get_facecolor()) == pytest.approx(to_rgb(bold["low"]), abs=1e-6)
+
+
+def test_tradeoff_figure_content(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, variants=("legacy", "base"), seeds=(1, 2, 3))
+    fig = plots.figure_tradeoff(exp)
+    ax = fig.axes[0]
+    sizes = [len(c.get_offsets()) for c in ax.collections]
+    assert sizes == [3, 3, 1, 1]  # a dot per seed of each variant, then random and greedy
+    assert "collisions" in ax.get_xlabel() and "deliveries" in ax.get_ylabel()
+    random_offset = ax.collections[2].get_offsets()[0]
+    assert list(random_offset) == [9.0, 0.5]
+    close(fig)
+
+
+def test_tradeoff_without_baselines_has_only_seed_dots(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path, baselines=False)
+    ax = plots.figure_tradeoff(exp).axes[0]
+    assert [len(c.get_offsets()) for c in ax.collections] == [2]
+
+
+def test_baseline_colours_agree_between_figures(tmp_path):
+    pytest.importorskip("matplotlib")
+    from matplotlib.colors import to_rgb
+
+    exp = make_experiment(tmp_path)
+    curve = plots.figure_learning_curve(exp, "deliveries").axes[0]
+    trade = plots.figure_tradeoff(exp).axes[0]
+    curve_colours = [to_rgb(ln.get_color()) for ln in dashed(curve)]
+    trade_colours = [to_rgb(c.get_facecolor()[0][:3]) for c in trade.collections[1:]]
+    assert [tuple(round(v, 4) for v in c) for c in curve_colours] == [
+        tuple(round(v, 4) for v in c) for c in trade_colours
+    ]
+
+
+def test_report_tables_show_seed_counts_and_best_worst(tmp_path):
+    exp = make_experiment(tmp_path, variants=("base",), seeds=(1, 2, 3))
+    text = plots.make_report(exp).read_text()
+    # Final deliveries are 2 + 2 + 0.1 * seed, so seed 3 is best and seed 1 worst.
+    row = [ln for ln in text.splitlines() if ln.startswith("| base |")][0]
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert cells[:2] == ["base", "3"]
+    assert cells[2] == "4.20 ± 0.10"
+    assert cells[3] == "3.20 ± 0.10"
+    assert cells[4] == "3 (4.30)"
+    assert cells[5] == "1 (4.10)"
+
+
+def test_plot_all_propagates_real_drawing_errors(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    exp = make_experiment(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise ValueError("genuine bug")
+
+    monkeypatch.setattr(plots, "plot_training_diagnostics", broken)
+    with pytest.raises(ValueError, match="genuine bug"):
+        plots.plot_all(exp)
