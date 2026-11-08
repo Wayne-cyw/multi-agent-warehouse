@@ -53,7 +53,7 @@ class Policy(ABC):
         """Pick one action per observed robot.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
 
 
@@ -69,7 +69,7 @@ class RandomPolicy(Policy):
         """A uniform action per robot, drawn in sorted id order so a seed repeats exactly.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
         return {
             agent: int(self._rng.integers(len(ACTION_DELTAS))) for agent in sorted(observations)
@@ -88,7 +88,7 @@ class GreedyPolicy(Policy):
         """One greedy action per robot, in sorted id order.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
         return {agent: self._act_one(observations[agent]) for agent in sorted(observations)}
 
@@ -99,7 +99,7 @@ class GreedyPolicy(Policy):
         open neighbour at random, and stay when boxed in or already on the target.
 
         Preconditions:
-            - len(obs) == 8
+            - len(obs) >= 8
         """
         d_row, d_col = float(obs[_DR]), float(obs[_DC])
         if d_row == 0 and d_col == 0:
@@ -124,7 +124,7 @@ def _is_blocked(obs: np.ndarray, action: int) -> bool:
     """Whether the observation flags the neighbour in the direction of `action` as blocked.
 
     Preconditions:
-        - len(obs) == 8
+        - len(obs) >= 8
         - action in (UP, DOWN, LEFT, RIGHT)
     """
     return bool(obs[_BLOCKED + action - 1])
@@ -132,26 +132,36 @@ def _is_blocked(obs: np.ndarray, action: int) -> bool:
 
 @check_contracts
 class RLPolicy(Policy):
-    """A trained PPO network shared by every robot, sampling its actions like it did in training.
+    """A trained PPO network shared by every robot, sampling its actions unless deterministic.
 
     Stable-Baselines3 comes from the optional `rl` extra, so it is imported only when a model is
     loaded.
 
     Attributes:
         _model: The loaded Stable-Baselines3 PPO model.
+        _deterministic: Whether to take the most likely action instead of sampling.
 
     Representation Invariants:
         - self._rng is not None
     """
 
     _model: Any
+    _deterministic: bool
 
-    def __init__(self, model_path: str | Path = MODEL_PATH) -> None:
-        """Load the model saved at `model_path`."""
+    def __init__(
+        self, model_path: str | Path = MODEL_PATH, deterministic: bool = False, algo: str = "ppo"
+    ) -> None:
+        """Load the model saved at `model_path`; `deterministic` picks the most likely action.
+
+        Raises ValueError if `algo` is not "ppo".
+        """
         super().__init__()
+        if algo != "ppo":
+            raise ValueError(f"unknown algo {algo!r}; expected 'ppo'")
         from stable_baselines3 import PPO
 
         self._model = PPO.load(model_path, device="cpu")
+        self._deterministic = deterministic
 
     def reset(self, seed: int | None = None) -> None:
         """Start an episode; a seed also fixes the network's sampling, so the episode repeats.
@@ -167,14 +177,20 @@ class RLPolicy(Policy):
             torch.manual_seed(seed)
 
     def act(self, observations: dict[str, np.ndarray]) -> dict[str, int]:
-        """One sampled action per robot from a single batched forward pass, in sorted id order.
+        """One action per robot from a single batched forward pass, in sorted id order.
+
+        Actions are sampled unless the policy is deterministic. Raises ValueError when the
+        observations are not the size the model was trained on.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
         agents = sorted(observations)
         batch = np.stack([observations[agent] for agent in agents])
-        actions, _ = self._model.predict(batch, deterministic=False)
+        expected = int(self._model.observation_space.shape[0])
+        if batch.shape[1] != expected:
+            raise ValueError(f"model expects {expected} observation values, got {batch.shape[1]}")
+        actions, _ = self._model.predict(batch, deterministic=self._deterministic)
         return {agent: int(action) for agent, action in zip(agents, actions, strict=True)}
 
 

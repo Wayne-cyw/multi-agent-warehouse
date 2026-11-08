@@ -226,3 +226,41 @@ def test_main_draws_a_random_seed_when_none_is_given(monkeypatch, tmp_path, caps
     assert len(set(seeds)) > 1
     assert all(0 <= seed < 1000 for seed in seeds)
     assert all(str(seed) in printed for seed in seeds)
+
+
+def test_deterministic_rl_policy_repeats_actions(tmp_path):
+    import numpy as np
+
+    from multi_agent_warehouse.agents import RLPolicy
+    from multi_agent_warehouse.env import MultiAgentWarehouseEnv
+    from multi_agent_warehouse.train import TrainConfig, fit
+
+    path = fit(TrainConfig(n_envs=2, total_steps=512), out=tmp_path / "m")
+    observations, _ = MultiAgentWarehouseEnv().reset(seed=0)
+    policy = RLPolicy(path, deterministic=True)
+
+    first = policy.act(observations)
+    second = policy.act(observations)
+
+    assert first == second
+    assert np.all([a in range(5) for a in first.values()])
+
+
+def test_rl_policy_rejects_unknown_algo(tmp_path):
+    from multi_agent_warehouse.agents import RLPolicy
+
+    with pytest.raises(ValueError):
+        RLPolicy(tmp_path / "missing.zip", algo="dqn")
+
+
+def test_rl_policy_rejects_wrong_observation_size():
+    import numpy as np
+
+    from multi_agent_warehouse.agents import MODEL_PATH, RLPolicy
+
+    if not MODEL_PATH.exists():
+        pytest.skip("committed model is missing")
+    policy = RLPolicy(MODEL_PATH)
+
+    with pytest.raises(ValueError, match="expects 8"):
+        policy.act({"robot_0": np.zeros(14, dtype=np.float32)})

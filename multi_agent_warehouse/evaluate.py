@@ -6,7 +6,8 @@ measure the game itself and not a training aid.
 """
 
 import argparse
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from python_ta.contracts import check_contracts
@@ -35,11 +36,54 @@ DEFAULT_EPISODES = 100
 
 
 @check_contracts
+def evaluate_episodes(
+    make_policy: Callable[[], Policy],
+    seeds: Sequence[int],
+    n_robots: int = DEFAULT_N_ROBOTS,
+    env_kwargs: Mapping[str, Any] | None = None,
+) -> list[dict[str, int]]:
+    """Deliveries and collisions of one episode per seed, with shaping always off.
+
+    `make_policy` is called once per episode, so a caller may pass `lambda: shared_policy` to
+    reuse a loaded model. Raises ValueError if `env_kwargs` contains `shaping`.
+
+    Preconditions:
+        - all(seed >= 0 for seed in seeds)
+        - 1 <= n_robots <= MAX_ROBOTS
+    """
+    kwargs = dict(env_kwargs or {})
+    if "shaping" in kwargs:
+        raise ValueError("evaluation always runs with shaping off; remove 'shaping'")
+    results = []
+    for seed in seeds:
+        env = MultiAgentWarehouseEnv(n_robots=n_robots, shaping=False, **kwargs)
+        results.append(run_episode(env, make_policy(), seed))
+    return results
+
+
+@check_contracts
+def summarise(results: Sequence[dict[str, int]]) -> dict[str, tuple[float, float]]:
+    """Mean and 95% confidence half-width per metric; the half-width is 0.0 for one episode.
+
+    Preconditions:
+        - len(results) >= 1
+    """
+    stats = {}
+    for key in ("deliveries", "collisions"):
+        values = np.array([result[key] for result in results], dtype=float)
+        n = len(values)
+        half_width = CI_Z * values.std(ddof=1) / np.sqrt(n) if n > 1 else 0.0
+        stats[key] = (float(values.mean()), float(half_width))
+    return stats
+
+
+@check_contracts
 def evaluate_with_ci(
     make_policy: Callable[[], Policy],
     n_episodes: int = DEFAULT_EPISODES,
     first_seed: int = 1000,
     n_robots: int = DEFAULT_N_ROBOTS,
+    env_kwargs: Mapping[str, Any] | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Mean and 95% confidence half-width per metric over seeds `first_seed` onward.
 
@@ -50,16 +94,8 @@ def evaluate_with_ci(
         - first_seed >= 0
         - 1 <= n_robots <= MAX_ROBOTS
     """
-    results = []
-    for seed in range(first_seed, first_seed + n_episodes):
-        env = MultiAgentWarehouseEnv(n_robots=n_robots, shaping=False)
-        results.append(run_episode(env, make_policy(), seed))
-    stats = {}
-    for key in ("deliveries", "collisions"):
-        values = np.array([result[key] for result in results], dtype=float)
-        half_width = CI_Z * values.std(ddof=1) / np.sqrt(n_episodes) if n_episodes > 1 else 0.0
-        stats[key] = (float(values.mean()), float(half_width))
-    return stats
+    seeds = range(first_seed, first_seed + n_episodes)
+    return summarise(evaluate_episodes(make_policy, seeds, n_robots, env_kwargs))
 
 
 @check_contracts
