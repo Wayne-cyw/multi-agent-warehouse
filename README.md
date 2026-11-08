@@ -3,7 +3,7 @@
 
 <p align="center">
   <img src="docs/multi_agent_warehouse/demo.gif" alt="The trained PPO agent controlling three robots that deliver items in the warehouse" width="420"><br>
-  <sub>The trained PPO agent, 100 steps: 44 deliveries, 20 collisions (evaluation seed 50). Each robot runs the same network.</sub>
+  <sub>The first-version PPO agent (300k steps, `ppo_v1_300k.zip`), 100 steps: 44 deliveries, 20 collisions (evaluation seed 50). Each robot runs the same network.</sub>
 </p>
 
 ---
@@ -12,13 +12,16 @@
 
 - **The task:** three robots move simultaneously on an 8 x 8 grid. Each one reaches its target item, is
   handed a new target on delivery, and is penalised for bumping into other robots.
-- **The learner:** one PPO network (Stable-Baselines3) shared by all robots through SuperSuit
-  parameter sharing, trained for 300,000 steps in about 15 seconds on a laptop CPU.
-- **The result:** **51.1 deliveries per episode, against 12.7 for a hand-written greedy rule and 2.6
-  for random**, with about half of greedy's collisions. Measured over 100 fixed seeds with shaping
-  off, 95% confidence intervals below.
-- **The honesty:** it still collides about 15x more than random, it was tested on one layout with
-  one trained seed, and the [limitations](#what-this-does-and-does-not-show) are written down.
+- **The learner:** one recurrent PPO network (Stable-Baselines3 / sb3-contrib, an LSTM policy)
+  shared by all robots through SuperSuit parameter sharing, trained for 1,000,000 steps (about 35
+  minutes on a laptop CPU). The first version was a plain 300,000-step PPO that trained in about 15
+  seconds; it is kept as `models/ppo_v1_300k.zip`.
+- **The result:** **62.0 deliveries per episode, against 12.7 for a hand-written greedy rule and 2.6
+  for random**, with about an eighth of greedy's collisions (51 against 401). Measured over 100
+  fixed seeds with shaping off, 95% confidence intervals below.
+- **The honesty:** it still collides about 4x more than random, the model was picked from 5 seeds
+  and scored on a separate test block, and the [limitations](#what-this-does-and-does-not-show) are
+  written down.
 
 ## Why I Built This
 
@@ -58,16 +61,44 @@ be read in one sitting.
 4. **Stochastic actions at inference.** The trained policy samples from its action distribution
    instead of taking the arg-max. With shared weights and similar observations, deterministic robots
    can mirror each other into a head-on standoff forever; sampling breaks the symmetry. Seeding makes
-   each sampled episode reproducible.
+   each sampled episode reproducible. (The recurrent model largely avoids the collapse: see below.)
+5. **A tuned configuration found by experiment.** The shipped model uses a 14-value observation
+   (the basic eight plus four robot-neighbour flags and the offset to the nearest robot), an LSTM
+   policy, a collision penalty of -0.3 and an entropy bonus of 0.01. Each came from a measured
+   comparison, described in [`FINDINGS.md`](docs/multi_agent_warehouse/results/FINDINGS.md).
 
 ```bash
 pip install -e ".[rl]"
-python -m multi_agent_warehouse.train   # 300,000 steps, 8 envs, seed 0, n_steps 128, batch 256
+python -m multi_agent_warehouse.train   # the original plain PPO: 300,000 steps, 8 envs, n_steps 128
+python -m multi_agent_warehouse.experiment run --name my-run --variants tuned --seeds 1 --steps 1000000
 ```
 
-The committed model, `models/ppo_multi_agent_warehouse.zip` (146 KB), is exactly what those defaults
-produce, so it can be played and evaluated without training. The RL dependencies are an optional
-extra, imported lazily, so the environment and scripted baselines install without PyTorch.
+The committed model, `models/ppo_multi_agent_warehouse.zip` (7.2 MB), is the `tuned` variant
+(training seed 330, 1M steps). It comes with a sidecar, `models/ppo_multi_agent_warehouse.json`,
+holding its training config, which `evaluate.py` and `play.py` read to build the matching
+observation and policy class. A model without a sidecar is treated as a plain PPO on the basic
+observation. The RL dependencies are an optional extra, imported lazily, so the environment and
+scripted baselines install without PyTorch.
+
+### Seed policy and experiments
+
+Training seeds are drawn at random from `[0, 1000)` and recorded in each experiment's
+`manifest.json` (a fixed seed would let a lucky run pass as a result). Evaluation blocks are drawn
+from `[10,000, 2^31)`, so they never overlap training seeds. Every claim compares several seeds,
+reports the seed spread, and calls a difference real only if it is more than twice its standard
+error. Experiments are resumable and write CSVs and figures:
+
+```bash
+python -m multi_agent_warehouse.experiment run --name e5-tuned --variants tuned,base --seeds 5 --steps 1000000
+python -m multi_agent_warehouse.experiment plot --name e5-tuned
+python -m multi_agent_warehouse.experiment generalise --name e5-tuned --variants tuned,base
+python -m multi_agent_warehouse.experiment select --name e5-tuned --variant tuned --committed models/ppo_v1_300k.zip
+```
+
+`select` picks the best seed on a random validation block and reports it on a second, disjoint test
+block, so the reported model score is not inflated by the choice. The shipped model replaced the
+old one only because its test score beat both the old model and `base` by more than the seed
+spread.
 
 ### Evaluation protocol
 
@@ -82,13 +113,16 @@ which includes the shaping bonus.
 |--------|---------------------:|---------------------:|
 | random |        2.63 ± 0.34   |        12.80 ± 1.49  |
 | greedy |       12.67 ± 2.07   |       401.30 ± 24.24 |
-| **PPO (shared)** | **51.07 ± 3.27** | **189.95 ± 20.65** |
+| **Tuned recurrent PPO (shared)** | **61.99 ± 1.37** | **50.90 ± 4.91** |
+| *First version: plain PPO, 300k steps (`ppo_v1_300k.zip`)* | *51.07 ± 3.27* | *189.95 ± 20.65* |
 
-- PPO delivers about **4.0x more than greedy and 19x more than random**.
+- The tuned PPO delivers about **4.9x more than greedy and 24x more than random**, and collides
+  about one eighth as often as greedy.
 - Greedy has the worst collision count by far. A collision is counted per robot per step, so 200
   steps with 3 robots allows at most 600, and greedy sits at about 400. Its rule only looks at its
   own target and four neighbours, so its robots spend much of the episode blocking each other. That
-  is the coordination failure a learned policy should improve on, and PPO roughly halves it.
+  is the coordination failure a learned policy should improve on, and the tuned PPO cuts it by
+  about 87%.
 - Random barely collides because it barely goes anywhere. Collisions on their own are not a
   quality measure, which is why every result reports both columns.
 
@@ -111,15 +145,60 @@ margin and beat greedy, so the budget was a tuning matter and not a blocker. Not
 the default setting delivers less but collides far less (36 versus 137 to 171), a different point on
 the speed-versus-safety curve that I did not explore further.
 
+### How the improved model was found
+
+Training improvements were tested one at a time, 5 random seeds each, with a shared evaluation block
+(full numbers and caveats in
+[`FINDINGS.md`](docs/multi_agent_warehouse/results/FINDINGS.md)):
+
+- **Seed spread is large.** The original single run (51 deliveries) is typical, but across seeds the
+  same recipe ranges about 44 to 57.
+- **Training much longer helps the plain PPO**: about 51 at 300k, 60.8 at 3M steps.
+- **Memory and a richer observation clearly help** (500k steps): an LSTM adds about 10 deliveries
+  and the richer observation about 7; together about 12, and fewer collisions.
+- **A harsher collision penalty (-0.3) and an entropy bonus (0.01) helped only borderline** (just
+  over 2 standard errors), so they are included tentatively. A penalty of -1.0 clearly hurt.
+- **Training on random layouts did not help on held-out layouts** and was left out.
+
+![Deliveries per episode while training: tuned versus the plain PPO baseline](docs/multi_agent_warehouse/learning_curve_deliveries.png)
+
+The tuned model starts slower but overtakes the plain PPO by about 100k to 200k steps. At the same
+1M-step budget it is ahead by 4.6 deliveries (about 2.8 standard errors), with about 3.7x fewer
+collisions. The plain PPO was shown to keep improving to 3M steps, so this is an equal-budget
+comparison and not a claim to beat a fully trained plain PPO.
+
+The 5 tuned seeds were scored on a separate test block, and the best seed on validation (seed 330:
+63.0 deliveries) was chosen. The other four seeds average about 60.5, so a typical run is about 60.
+
+**Sampled versus deterministic.** The plain PPO collapses when it takes the arg-max action (11
+deliveries, about the same as greedy). The tuned recurrent policy mostly does not (55 deliveries),
+though it still does better with sampling (60). The cause is not diagnosed.
+
+![Sampled versus deterministic deliveries during training, tuned model](docs/multi_agent_warehouse/sampled_vs_deterministic_tuned.png)
+
+**Generalisation.** Both variants were trained on the default layout with 3 robots only, then
+evaluated on every layout and 2 to 6 robots (100 episodes per cell). On two layouts neither had
+seen, the tuned model averaged 42.7 deliveries against 34.7 for the plain PPO, and on the default
+layout it gets better with more robots while the plain PPO gets worse. The harder held-out layout
+(`maze_lite`) stays poor for both (22 and 13).
+
+![Deliveries by layout and robot count](docs/multi_agent_warehouse/generalisation.png)
+
 ### What this does and does not show
 
 - **Shown:** on this layout, with 3 robots, a single shared network trained with PPO beats both
   scripted baselines on deliveries and beats greedy on collisions, with confidence intervals that do
   not overlap.
-- **Not shown:** generalisation. The committed model is one training seed on one fixed map with 3
-  robots. The seed-to-seed spread above (about 55 to 60 deliveries) says a single run can land
-  noticeably above or below its neighbours, and I have not tested other maps or robot counts.
-- **Open problem:** PPO still collides about 190 times per episode, roughly 15x random. I have not
+- **Not shown:** strong generalisation. The committed model was trained on one fixed map with 3
+  robots. It transfers well to a similar wider-gap map, but remains poor on a maze-like one, and
+  training on random layouts did not fix that.
+- **Several changes at once.** The tuned model bundles four changes; the experiments support the
+  memory and observation changes clearly, and the collision-penalty and entropy changes only
+  tentatively. I did not isolate them in the final run.
+- **Selection and budget.** The shipped model is the best of 5 seeds picked on validation, so it is a
+  few deliveries above the typical run (about 60). It is also the product of 1M steps of an LSTM
+  (about 30x slower per step than the plain network); at 3M steps a plain PPO reaches about 61.
+- **Open problem:** it still collides about 51 times per episode, about 4x random. I have not
   investigated where those collisions happen, so I make no claim about why.
 - **Caveat on the shaping guarantee:** potential-based shaping preserves the optimal policy exactly
   only with no discounting and within one target's lifetime. PPO discounts at 0.99 and targets
@@ -227,7 +306,7 @@ python play.py --policy rl                  # watch the trained PPO agent
 python play.py                              # greedy baseline (space pause, R reset, P switch policy, Q quit)
 python play.py --policy random --robots 4   # other policy, more robots
 python -m multi_agent_warehouse.evaluate    # reproduce the results table (--episodes N changes the sample size)
-python -m multi_agent_warehouse.train       # retrain the model (writes models/ppo_multi_agent_warehouse.zip)
+python -m multi_agent_warehouse.train       # retrain the original plain PPO (writes models/ppo_multi_agent_warehouse.zip and its sidecar)
 pytest                                      # run the tests
 ```
 
@@ -244,17 +323,19 @@ multi-agent-warehouse/
 │   ├── env.py        # the ParallelEnv
 │   ├── render.py     # Pygame renderer
 │   ├── agents.py     # random, greedy and RL policies
-│   ├── train.py      # PPO training
+│   ├── train.py      # PPO / recurrent PPO training
+│   ├── experiment.py # multi-seed experiments, model selection
+│   ├── plots.py      # learning curves and comparison figures
 │   └── evaluate.py   # seeded evaluation
-├── models/           # trained PPO weights
+├── models/           # trained weights and their config sidecars
 ├── play.py           # live demo
 ├── tests/            # one test file per module
-└── docs/             # demo GIF
+└── docs/             # demo GIF, figures, results/FINDINGS.md
 ```
 
 ## Testing & Quality
 
-- 63 tests covering the rules, the environment contract (invalid actions, calls after the episode
+- 195 tests covering the rules, the environment contract (invalid actions, calls after the episode
   ends, bad robot counts, determinism), the renderer, the demo and the PPO stack (training saves a
   loadable model, the policy acts for every robot). The RL tests skip if the `rl` extra is absent,
   and everything runs headless via `SDL_VIDEODRIVER=dummy`.
@@ -268,5 +349,6 @@ multi-agent-warehouse/
 - [x] Random and greedy baselines with a seeded evaluation and confidence intervals
 - [x] Train PPO (Stable-Baselines3) with parameter sharing through SuperSuit, using shaping during training only
 - [x] Compare the learned policy against both baselines, and report honestly where it lands
+- [x] Improve training with multi-seed experiments (longer training, memory, richer observation, reward and entropy tuning)
 - [ ] Analyse where PPO's remaining collisions happen
-- [ ] Generalise across layouts and robot counts, one level at a time
+- [x] Generalise across layouts and robot counts, one level at a time (measured; maze-like layouts are still poor)

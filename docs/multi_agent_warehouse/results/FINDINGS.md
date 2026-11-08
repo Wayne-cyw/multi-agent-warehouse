@@ -225,3 +225,55 @@ By robot count on the held-out layouts, `rand − fixed` is −9.3, −11.6, −
 - Only two held-out layouts, one of them nearly in-distribution, so the held-out average rests on very few distinct situations. The held-out aggregate mixes a score near 56 with one near 13 and is mostly a statement about `wide_gap`.
 - The observation is the absolute cell plus the target offset, so a policy can memorise the default map. This is a plausible reason `fixed` does well where the map resembles the default and poorly elsewhere; no experiment here tests it.
 - Seeds are 5 per variant; the eval block is shared, so comparisons within E4 are paired on episodes, but not comparable to E1 to E3 numbers.
+
+# E5 tuned model
+
+## E5 settings actually used
+
+- Variants: `base` and `tuned`. `tuned` = `rich_lstm` (rich observation and `RecurrentPPO`, the clear E3 wins) plus `collision_penalty` -0.3 (E2 `coll_0.3`) plus `ent_coef` 0.01 (E2 `ent_0.01`). The two E2 knobs were only borderline there (Δ/SE 2.27 and 2.03), so they are tentative inclusions. The layout-randomised variant `rand` is excluded: on held-out layouts it was 7.98 deliveries worse than `fixed` (E4).
+- **E5 trains at 1M steps, not 3M**, for both variants, because the LSTM trains at about 500 to 550 steps/s (3M would take about 5 h per seed). `base` is also at 1M, so the comparison is paired at equal steps. `base` was already shown to keep improving to 3M in E1 (60.78 ± 1.77), so `tuned` at 1M is not compared against a fully trained `base`.
+- 5 training seeds [367, 939, 330, 605, 150] (random draw, in `manifest.json`), eval seed base 2135743778, 100 episodes, shared by both variants. Code at commit `4e291c8`. Numbers are sampled actions, final (1M) checkpoint, mean over 5 seeds ± seed std.
+- Figures: `e5/learning_curve_deliveries.png`, `e5/variant_comparison.png`, `e5/tradeoff.png`, `e5/generalisation.png`, `e5/sampled_vs_deterministic_*.png`; `e5/final.csv`.
+
+## E5 results (experiment eval block)
+
+| variant | sampled deliveries | sampled collisions | deterministic deliveries | deterministic collisions |
+|---|---|---|---|---|
+| tuned | 59.95 ± 2.86 | 47.94 ± 6.01 | 55.48 ± 4.70 | 121.60 ± 38.25 |
+| base | 55.40 ± 2.30 | 179.14 ± 11.11 | 11.36 ± 0.52 | 400.80 ± 20.99 |
+
+Sampled deliveries: tuned minus base = +4.55 (SE 1.64, Δ/SE 2.77), collisions about 131 fewer (about 3.7x fewer than base). Deterministic: +44.12 (SE 2.11), because the tuned policy no longer collapses under argmax (55.5 against base's 11.4; greedy 12.3). Greedy on this block is 12.27 deliveries and 414.3 collisions, random 2.66 and 14.05.
+
+Learning curve (sampled deliveries, mean over seeds): tuned 31.6 (50k), 51.0 (100k), 59.9 (200k), 61.4 (300k), 62.7 (500k), 59.95 (1M); base 51.9, 54.4, 53.6, 50.0, 49.5, 55.4. Tuned starts much slower, overtakes base by about 100k to 200k and is ahead from there; its mean peaks at 500k and is about 2.8 lower at 1M (about one seed std, so possibly noise, not investigated). The tuned gain at 1M (+4.55) is much smaller than the E3 gain at 500k (+12), partly because `base` improves late.
+
+## E5 model selection (honest test)
+
+Selection used `select_and_test`: a validation block (100 episodes, base 1567250135) chooses the seed; a second, disjoint test block (100 episodes, base 844549345; disjoint from the validation block, the experiment's eval block and every training seed) scores it. All seeds, `base` and the committed model were also scored on the test block, for the comparison only (no selection used it).
+
+| model | validation | test deliveries | test collisions |
+|---|---|---|---|
+| tuned seed 330 (selected) | 62.82 | 63.03 ± 1.43 (CI) | 50.76 |
+| tuned, other seeds (test) | | 56.74, 62.17, 60.65, 62.59 | 44 to 53 |
+| base, 5 seeds mean (test) | | 57.16 (55.9 to 57.9) | about 173 |
+| committed 300k legacy PPO (test) | | 48.69 ± 3.93 (CI) | 212.08 |
+
+Seed spread (std over the 5 tuned seeds' test scores) is 2.56. The selected tuned seed beats the `base` mean by 5.87 and the committed model by 14.34, both more than the spread, so by the pre-set rule the committed model was replaced. The legacy model is kept as `models/ppo_v1_300k.zip`. Reference evaluation on the README seeds (1000 to 1099): 61.99 ± 1.37 deliveries and 50.90 ± 4.91 collisions (random 2.63, greedy 12.67 with 401.3 collisions).
+
+## E5 generalisation (extra, not part of selection)
+
+Every final model on all layouts and robot counts 2 to 6, 100 episodes per cell, mean over 5 seeds of the per-seed average (seed std):
+
+| variant | default layout | held-out layouts (`wide_gap`, `maze_lite`) | `maze_lite` | training layouts `open`, `aisles`, `scatter` |
+|---|---|---|---|---|
+| tuned | 67.73 ± 2.62 | 42.71 ± 2.78 | 21.87 ± 3.33 | 26.70 ± 2.50 |
+| base | 49.74 ± 3.04 | 34.73 ± 1.49 | 12.63 ± 0.63 | 20.35 ± 0.46 |
+
+(The default-layout column averages robot counts 2 to 6.) Both are trained on the default layout only, so the "training layouts" column is also unseen for them. `tuned` is ahead everywhere, and on the default layout it improves with more robots (44.1 at 2, 60.4 at 3, 82.6 at 6) while `base` falls with them (49.1 at 2, 41.5 at 6). 6 robots were never trained on. `maze_lite` stays hard for both (22 and 13).
+
+## E5 caveats
+
+- `tuned` bundles four changes (rich observation, LSTM, collision penalty, entropy). E5 does not separate them. E3 supports the first two. The last two were borderline in E2 and E5 does not test them alone, so their contribution is unknown; the collision gain (about 48 against 179) is consistent with the -0.3 penalty but the LSTM alone also cut collisions in E3.
+- 5 seeds, 1M steps, and `base` was not trained to 3M, where E1 shows it reaching about 61 (this tuned model's 60 at 1M would then be roughly level). So this shows `tuned` is better at equal and small budgets and much safer, not that it beats the best `base` at any budget.
+- The selected seed's test score (63.03) is an unbiased estimate for that seed, but the other seeds on the same block average 60.5, so the typical `tuned` run is about 60, not 63.
+- The LSTM costs about 30x the training time per step, and the shipped model is 7.2 MB instead of 146 KB.
+- The comparison with the committed model is on a block the old model never saw, but the old model was trained for 300k steps, so it conflates training budget with method.
