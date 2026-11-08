@@ -310,7 +310,8 @@ def test_learning_curve_figure_content(tmp_path):
     assert len(dashed(ax)) == 2
     # 6 thin seed lines + 2 bold means + 2 baselines
     assert len(ax.get_lines()) == 10
-    assert len(ax.collections) == 2  # one band per variant
+    # One band per variant.
+    assert len(ax.collections) == 2
     labels = [t.get_text() for t in ax.get_legend().get_texts()]
     assert labels == [
         "legacy (mean of 3)",
@@ -329,7 +330,8 @@ def test_learning_curve_figure_without_baselines_has_no_dashed_lines(tmp_path):
     fig = plots.figure_learning_curve(exp, "collisions")
     ax = fig.axes[0]
     assert dashed(ax) == []
-    assert len(ax.get_lines()) == 2 + 1  # two thin seed lines and one mean
+    # Two thin seed lines and one mean.
+    assert len(ax.get_lines()) == 2 + 1
     assert "collisions per episode" in ax.get_ylabel()
     close(fig)
 
@@ -418,7 +420,8 @@ def test_variant_comparison_figure_content(tmp_path):
     assert [t.get_text() for t in ax.get_xticklabels()] == ["high", "low"]
     heights = [bar.get_height() for bar in ax.patches]
     assert heights[0] > heights[1]
-    assert len(ax.containers) == 2  # bar container plus its error bars
+    # The bar container plus its error bars.
+    assert len(ax.containers) == 2
     assert any("n=3 seeds" in t.get_text() for t in ax.texts)
     close(fig)
 
@@ -446,7 +449,8 @@ def test_tradeoff_figure_content(tmp_path):
     fig = plots.figure_tradeoff(exp)
     ax = fig.axes[0]
     sizes = [len(c.get_offsets()) for c in ax.collections]
-    assert sizes == [3, 3, 1, 1]  # a dot per seed of each variant, then random and greedy
+    # A dot per seed of each variant, then random and greedy.
+    assert sizes == [3, 3, 1, 1]
     assert "collisions" in ax.get_xlabel() and "deliveries" in ax.get_ylabel()
     random_offset = ax.collections[2].get_offsets()[0]
     assert list(random_offset) == [9.0, 0.5]
@@ -497,3 +501,96 @@ def test_plot_all_propagates_real_drawing_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(plots, "plot_training_diagnostics", broken)
     with pytest.raises(ValueError, match="genuine bug"):
         plots.plot_all(exp)
+
+
+def many(tmp_path, n):
+    """An experiment with `n` variants named v00, v01, ... and two seeds."""
+    return make_experiment(tmp_path, variants=tuple(f"v{i:02d}" for i in range(n)), seeds=(1, 2))
+
+
+def mean_lines(ax):
+    """The bold, non-dashed mean lines of `ax`."""
+    return [ln for ln in ax.get_lines() if ln.get_linestyle() != "--" and ln.get_linewidth() > 2]
+
+
+def test_variant_style_is_distinct_for_up_to_thirty_variants():
+    names = [f"v{i}" for i in range(30)]
+    styles = [plots.variant_style(names, n) for n in names]
+    assert len({(s["color"], s["linestyle"]) for s in styles}) == 30
+    assert len({(s["color"], s["marker"]) for s in styles}) == 30
+    assert all(s["linestyle"] != "--" for s in styles)
+    assert plots.variant_style(names, "v3") == plots.variant_style(names, "v3")
+
+
+def test_many_variants_mean_lines_are_distinct_without_seed_lines(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = many(tmp_path, 10)
+    fig = plots.figure_learning_curve(exp, "deliveries")
+    ax = fig.axes[0]
+    pairs = {(ln.get_color(), ln.get_linestyle()) for ln in mean_lines(ax)}
+    assert len(pairs) == 10
+    # No thin per-seed lines: only the 10 means and the 2 baselines.
+    assert len(ax.get_lines()) == 12
+    # More than eight variants also drops the shaded bands.
+    assert len(ax.collections) == 0
+    close(fig)
+
+
+def test_crowded_but_not_huge_keeps_light_bands(tmp_path):
+    pytest.importorskip("matplotlib")
+    ax = plots.figure_learning_curve(many(tmp_path, 6), "deliveries").axes[0]
+    assert len(ax.get_lines()) == 6 + 2
+    assert len(ax.collections) == 6
+    assert all(c.get_alpha() < 0.18 for c in ax.collections)
+
+
+def test_few_variants_keep_seed_lines_and_inside_legend(tmp_path):
+    pytest.importorskip("matplotlib")
+    fig = plots.figure_learning_curve(many(tmp_path, 4), "deliveries")
+    ax = fig.axes[0]
+    assert len(ax.get_lines()) == 4 * 2 + 4 + 2
+    fig.canvas.draw()
+    assert ax.get_legend().get_window_extent().x0 < ax.get_window_extent().x1
+    close(fig)
+
+
+def test_legend_is_outside_the_axes_for_many_variants(tmp_path):
+    pytest.importorskip("matplotlib")
+    exp = many(tmp_path, 10)
+    for fig in (plots.figure_learning_curve(exp, "deliveries"), plots.figure_tradeoff(exp)):
+        fig.canvas.draw()
+        ax = fig.axes[0]
+        assert ax.get_legend().get_window_extent().x0 >= ax.get_window_extent().x1
+        close(fig)
+
+
+def test_tradeoff_legend_inside_for_six_variants_or_fewer(tmp_path):
+    pytest.importorskip("matplotlib")
+    fig = plots.figure_tradeoff(many(tmp_path, 6))
+    fig.canvas.draw()
+    ax = fig.axes[0]
+    assert ax.get_legend().get_window_extent().x0 < ax.get_window_extent().x1
+    close(fig)
+
+
+def test_tradeoff_variant_markers_differ_and_baselines_stay_distinct(tmp_path):
+    pytest.importorskip("matplotlib")
+    ax = plots.figure_tradeoff(many(tmp_path, 10)).axes[0]
+    paths = [tuple(map(tuple, c.get_paths()[0].vertices.round(3).tolist())) for c in ax.collections]
+    variant_markers, baseline_markers = paths[:10], paths[10:]
+    assert len(set(variant_markers)) == 10
+    assert not set(variant_markers) & set(baseline_markers)
+    assert len(set(baseline_markers)) == 2
+
+
+def test_comparison_bars_use_the_shared_variant_colours(tmp_path):
+    pytest.importorskip("matplotlib")
+    from matplotlib.colors import to_rgb
+
+    exp = many(tmp_path, 10)
+    names = [f"v{i:02d}" for i in range(10)]
+    ax = plots.figure_variant_comparison(exp).axes[0]
+    # Higher index scores higher, so bars run v09 .. v00.
+    for bar, name in zip(ax.patches, reversed(names), strict=True):
+        expected = to_rgb(plots.variant_style(names, name)["color"])
+        assert to_rgb(bar.get_facecolor()) == pytest.approx(expected, abs=1e-6)

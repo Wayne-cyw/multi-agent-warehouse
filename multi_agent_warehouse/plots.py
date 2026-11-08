@@ -27,7 +27,29 @@ METRICS = {
     "collisions": "collisions per episode",
 }
 BASELINE_COLOURS = {"random": "#888888", "greedy": "#444444"}
-PALETTE = ("#2a6fb0", "#e08a1e", "#3a9d5d", "#b4414f", "#7e5bb5", "#4aa3a8")
+# Twelve distinct colours (colour-blind-safe core plus extras) for variants.
+PALETTE = (
+    "#0072B2",
+    "#E69F00",
+    "#009E73",
+    "#D55E00",
+    "#7B3F98",
+    "#56B4E9",
+    "#CC79A7",
+    "#8C564B",
+    "#8A9A00",
+    "#1B2A6B",
+    "#17BECF",
+    "#222222",
+)
+# Past the palette, line styles cycle (never "--", which marks the baselines).
+LINESTYLES = ("-", "-.", ":")
+# Variant scatter markers; the baselines use "X" and "P", which are left out here.
+MARKERS = ("o", "s", "^", "D", "v", "<", ">", "h", "p", "*")
+# Beyond this many variants the figures drop per-seed lines and move the legend outside.
+CROWDED = 4
+# Beyond this many variants the learning curves also drop the shaded bands.
+VERY_CROWDED = 8
 STEPS_COLUMN = "time/total_timesteps"
 DIAGNOSTICS = (
     ("rollout/ep_rew_mean", "episode reward (training mean)"),
@@ -201,9 +223,30 @@ def _pyplot() -> Any:
     return plt
 
 
-def _colour(variants: Sequence[str], variant: str) -> str:
-    """A stable colour for `variant` within `variants`."""
-    return PALETTE[list(variants).index(variant) % len(PALETTE)]
+def variant_style(variants: Sequence[str], variant: str) -> dict[str, str]:
+    """The `color`, `linestyle` and `marker` of `variant`, fixed by its place in `variants`.
+
+    Every figure of one experiment passes the same `variants` (from `variants_of`), so a variant
+    keeps its look everywhere. Colours cycle through `PALETTE`; line style changes each time the
+    palette wraps and the marker cycles independently, so no two of ~36 variants look identical.
+
+    Preconditions:
+        - variant in variants
+    """
+    i = list(variants).index(variant)
+    return {
+        "color": PALETTE[i % len(PALETTE)],
+        "linestyle": LINESTYLES[(i // len(PALETTE)) % len(LINESTYLES)],
+        "marker": MARKERS[i % len(MARKERS)],
+    }
+
+
+def _legend(ax: Any, outside: bool) -> None:
+    """Draw the legend, to the right of the axes when `outside`."""
+    if outside:
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8, borderaxespad=0)
+    else:
+        ax.legend(loc="best", fontsize=8)
 
 
 def _finish(fig: Any, out: Path) -> Path:
@@ -251,27 +294,42 @@ def figure_learning_curve(exp_dir: Path, metric: str, mode: str = "sampled") -> 
     variants = variants_of(rows)
     if not any(row["mode"] == mode for row in rows):
         raise ValueError(f"no {mode} rows in eval_curve.csv of {exp_dir}")
+    crowded = len(variants) > CROWDED
     plt = _pyplot()
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(10 if crowded else 8, 5.5 if crowded else 5))
     xs: list[float] = []
     for variant in variants:
         series = seed_series(rows, variant, mode, metric)
-        colour = _colour(variants, variant)
+        style = variant_style(variants, variant)
         for points in series.values():
             xs += [t for t, _ in points]
-            ax.plot(*zip(*points, strict=False), color=colour, alpha=0.3, linewidth=0.8)
+            if not crowded:
+                ax.plot(
+                    *zip(*points, strict=False),
+                    color=style["color"],
+                    linestyle=style["linestyle"],
+                    alpha=0.3,
+                    linewidth=0.8,
+                )
         agg = aggregate_curve(series)
         if agg:
             t, mean, lower, upper = (np.array(col) for col in zip(*agg, strict=False))
             ax.plot(
-                t, mean, color=colour, linewidth=2.5, label=f"{variant} (mean of {len(series)})"
+                t,
+                mean,
+                color=style["color"],
+                linestyle=style["linestyle"],
+                linewidth=2.2 if crowded else 2.5,
+                label=f"{variant} (mean of {len(series)})",
             )
-            ax.fill_between(t, lower, upper, color=colour, alpha=0.18, linewidth=0)
+            if len(variants) <= VERY_CROWDED:
+                alpha = 0.10 if crowded else 0.18
+                ax.fill_between(t, lower, upper, color=style["color"], alpha=alpha, linewidth=0)
     _draw_baselines(ax, load_baselines(exp_dir), metric)
     _set_timestep_axis(ax, xs)
     ax.set_ylabel(METRICS[metric])
     ax.set_title(f"{Path(exp_dir).name}: {METRICS[metric]} ({mode} policy)")
-    ax.legend(loc="best", fontsize=8)
+    _legend(ax, crowded)
     return fig
 
 
@@ -367,7 +425,7 @@ def figure_variant_comparison(exp_dir: Path) -> Any:
     names = [name for name, *_ in ranked]
     # Colour by variant order, as in the other figures.
     order = variants_of(load_curve(exp_dir))
-    colours = [_colour(order, name) for name in names]
+    colours = [variant_style(order, name)["color"] for name in names]
     means, stds = [m for _, m, _, _ in ranked], [s for _, _, s, _ in ranked]
     ax.bar(names, means, yerr=stds, capsize=6, color=colours, alpha=0.85)
     top = max(m + s for m, s in zip(means, stds, strict=False))
@@ -393,14 +451,17 @@ def figure_tradeoff(exp_dir: Path) -> Any:
     if not final:
         raise ValueError(f"no sampled rows in eval_curve.csv of {exp_dir}")
     plt = _pyplot()
-    fig, ax = plt.subplots(figsize=(7, 5.5))
+    outside = len(variants) > 6
+    fig, ax = plt.subplots(figsize=(9 if outside else 7, 5.5))
     for variant in variants:
         points = [r for (v, _), r in final.items() if v == variant]
+        style = variant_style(variants, variant)
         ax.scatter(
             [r["mean_collisions"] for r in points],
             [r["mean_deliveries"] for r in points],
-            color=_colour(variants, variant),
-            s=45,
+            color=style["color"],
+            marker=style["marker"],
+            s=55,
             alpha=0.85,
             label=f"{variant} (n={len(points)})",
         )
@@ -417,7 +478,7 @@ def figure_tradeoff(exp_dir: Path) -> Any:
     ax.set_ylabel(METRICS["deliveries"])
     ax.set_title(f"{Path(exp_dir).name}: deliveries vs collisions (final checkpoint)")
     ax.grid(alpha=0.25)
-    ax.legend(loc="best", fontsize=8)
+    _legend(ax, outside)
     return fig
 
 
