@@ -17,7 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pillow"]
-rl = ["stable-baselines3>=2.3", "supersuit>=3.9", "torch>=2.2"]
+rl = ["stable-baselines3>=2.3", "supersuit>=3.9", "torch>=2.2", "sb3-contrib>=2.3"]
+plot = ["matplotlib>=3.8"]
 
 [tool.setuptools.packages.find]
 include = ["multi_agent_warehouse*"]

@@ -5,6 +5,7 @@ Every policy has the same two methods, so the demo and the evaluation share one 
 """
 
 import importlib.util
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
@@ -53,7 +54,7 @@ class Policy(ABC):
         """Pick one action per observed robot.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
 
 
@@ -69,7 +70,7 @@ class RandomPolicy(Policy):
         """A uniform action per robot, drawn in sorted id order so a seed repeats exactly.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
         return {
             agent: int(self._rng.integers(len(ACTION_DELTAS))) for agent in sorted(observations)
@@ -88,7 +89,7 @@ class GreedyPolicy(Policy):
         """One greedy action per robot, in sorted id order.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
         return {agent: self._act_one(observations[agent]) for agent in sorted(observations)}
 
@@ -99,7 +100,7 @@ class GreedyPolicy(Policy):
         open neighbour at random, and stay when boxed in or already on the target.
 
         Preconditions:
-            - len(obs) == 8
+            - len(obs) >= 8
         """
         d_row, d_col = float(obs[_DR]), float(obs[_DC])
         if d_row == 0 and d_col == 0:
@@ -124,7 +125,7 @@ def _is_blocked(obs: np.ndarray, action: int) -> bool:
     """Whether the observation flags the neighbour in the direction of `action` as blocked.
 
     Preconditions:
-        - len(obs) == 8
+        - len(obs) >= 8
         - action in (UP, DOWN, LEFT, RIGHT)
     """
     return bool(obs[_BLOCKED + action - 1])
@@ -132,34 +133,63 @@ def _is_blocked(obs: np.ndarray, action: int) -> bool:
 
 @check_contracts
 class RLPolicy(Policy):
-    """A trained PPO network shared by every robot, sampling its actions like it did in training.
+    """A trained network shared by every robot, sampling its actions unless deterministic.
 
-    Stable-Baselines3 comes from the optional `rl` extra, so it is imported only when a model is
-    loaded.
+    With `algo="recurrent_ppo"` the network is an LSTM, and the policy keeps one LSTM state per
+    robot between `act` calls. Robots are batched in sorted id order, which is the order SuperSuit
+    gives them inside one training warehouse, and `reset` clears the state, so an episode with a
+    different number of robots starts cleanly. Stable-Baselines3 and sb3-contrib come from the
+    optional `rl` extra, so they are imported only when a model is loaded.
 
     Attributes:
-        _model: The loaded Stable-Baselines3 PPO model.
+        _model: The loaded Stable-Baselines3 or sb3-contrib model.
+        _deterministic: Whether to take the most likely action instead of sampling.
+        _recurrent: Whether the model is recurrent and so carries state between steps.
+        _state: The recurrent model's `(hidden, cell)` arrays from the last `act`, each shaped
+            `(n_layers, n_robots, hidden_size)`, or None at the start of an episode.
+        _episode_start: Whether the next `act` is the first of an episode.
 
     Representation Invariants:
         - self._rng is not None
+        - self._recurrent or self._state is None
+        - self._state is None or not self._episode_start
     """
 
     _model: Any
+    _deterministic: bool
+    _recurrent: bool
+    _state: tuple[np.ndarray, np.ndarray] | None
+    _episode_start: bool
 
-    def __init__(self, model_path: str | Path = MODEL_PATH) -> None:
-        """Load the model saved at `model_path`."""
+    def __init__(
+        self, model_path: str | Path = MODEL_PATH, deterministic: bool = False, algo: str = "ppo"
+    ) -> None:
+        """Load the `algo` model at `model_path`; `deterministic` picks the most likely action.
+
+        Raises ValueError if `algo` is not one of `train.ALGOS`.
+        """
         super().__init__()
-        from stable_baselines3 import PPO
+        from multi_agent_warehouse.train import ALGOS, model_class
 
-        self._model = PPO.load(model_path, device="cpu")
+        if algo not in ALGOS:
+            raise ValueError(f"unknown algo {algo!r}; expected one of {ALGOS}")
+        self._model = model_class(algo).load(model_path, device="cpu")
+        self._deterministic = deterministic
+        self._recurrent = algo == "recurrent_ppo"
+        self._state = None
+        self._episode_start = True
 
     def reset(self, seed: int | None = None) -> None:
         """Start an episode; a seed also fixes the network's sampling, so the episode repeats.
+
+        Any recurrent state is cleared, so the next `act` starts a new episode.
 
         Preconditions:
             - seed is None or seed >= 0
         """
         super().reset(seed)
+        self._state = None
+        self._episode_start = True
         if seed is not None:
             # SB3 samples actions through torch's global generator, so that is the one to seed.
             import torch
@@ -167,15 +197,57 @@ class RLPolicy(Policy):
             torch.manual_seed(seed)
 
     def act(self, observations: dict[str, np.ndarray]) -> dict[str, int]:
-        """One sampled action per robot from a single batched forward pass, in sorted id order.
+        """One action per robot from a single batched forward pass, in sorted id order.
+
+        Actions are sampled unless the policy is deterministic. Raises ValueError when the
+        observations are not the size the model was trained on, or when a recurrent policy sees a
+        different number of robots than earlier in the episode.
 
         Preconditions:
-            - all(len(obs) == 8 for obs in observations.values())
+            - all(len(obs) >= 8 for obs in observations.values())
         """
         agents = sorted(observations)
         batch = np.stack([observations[agent] for agent in agents])
-        actions, _ = self._model.predict(batch, deterministic=False)
+        expected = int(self._model.observation_space.shape[0])
+        if batch.shape[1] != expected:
+            raise ValueError(f"model expects {expected} observation values, got {batch.shape[1]}")
+        if not self._recurrent:
+            actions, _ = self._model.predict(batch, deterministic=self._deterministic)
+        else:
+            if self._state is not None and self._state[0].shape[1] != len(agents):
+                raise ValueError("the robot count changed mid-episode; call reset first")
+            episode_start = np.full(len(agents), self._episode_start)
+            actions, state = self._model.predict(
+                batch,
+                state=self._state,
+                episode_start=episode_start,
+                deterministic=self._deterministic,
+            )
+            self._state = (state[0], state[1])
+            self._episode_start = False
         return {agent: int(action) for agent, action in zip(agents, actions, strict=True)}
+
+
+def _sidecar(model_path: str | Path) -> dict[str, Any]:
+    """The JSON next to `model_path` (same name, `.json`), or an empty dict when there is none."""
+    path = Path(model_path).with_suffix(".json")
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def policy_env_kwargs(model_path: str | Path) -> dict[str, Any]:
+    """The env keyword arguments the model at `model_path` was trained with.
+
+    They come from the model's sidecar, `<name>.json` beside `<name>.zip`, which is a training
+    config; the result is empty when there is no sidecar, as for the original model.
+    """
+    return dict(_sidecar(model_path).get("env_kwargs", {}))
+
+
+def policy_algo(model_path: str | Path) -> str:
+    """The algorithm of the model at `model_path` from its sidecar, "ppo" when there is none."""
+    return str(_sidecar(model_path).get("algo", "ppo"))
 
 
 POLICIES: dict[str, Callable[[], Policy]] = {
@@ -185,8 +257,14 @@ POLICIES: dict[str, Callable[[], Policy]] = {
 
 
 def available_policies() -> dict[str, Callable[[], Policy]]:
-    """`POLICIES`, plus `rl` when the model file exists and Stable-Baselines3 is installed."""
+    """`POLICIES`, plus `rl` when the model file exists and its libraries are installed.
+
+    Those are Stable-Baselines3, and sb3-contrib too when the model's sidecar says it is a
+    recurrent PPO. The `rl` policy is built with the algorithm recorded in the sidecar.
+    """
     policies = dict(POLICIES)
     if MODEL_PATH.exists() and importlib.util.find_spec("stable_baselines3") is not None:
-        policies["rl"] = lambda: RLPolicy(MODEL_PATH)
+        algo = policy_algo(MODEL_PATH)
+        if algo != "recurrent_ppo" or importlib.util.find_spec("sb3_contrib") is not None:
+            policies["rl"] = lambda: RLPolicy(MODEL_PATH, algo=algo)
     return policies

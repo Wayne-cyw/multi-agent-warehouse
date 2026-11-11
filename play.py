@@ -11,7 +11,8 @@ import numpy as np
 import pygame
 from python_ta.contracts import check_contracts
 
-from multi_agent_warehouse.agents import Policy, available_policies
+from multi_agent_warehouse import agents
+from multi_agent_warehouse.agents import Policy, available_policies, policy_env_kwargs
 from multi_agent_warehouse.config import DEFAULT_N_ROBOTS, MAX_ROBOTS, RENDER_FPS
 from multi_agent_warehouse.env import MultiAgentWarehouseEnv
 
@@ -59,7 +60,10 @@ class Demo:
         self._policy_names = list(self._policies)
         self._policy_name = policy_name
         self._policy = self._policies[policy_name]()
-        self._env = MultiAgentWarehouseEnv(n_robots=n_robots, render_mode="human", render_fps=fps)
+        env_kwargs = policy_env_kwargs(agents.MODEL_PATH) if "rl" in self._policies else {}
+        self._env = MultiAgentWarehouseEnv(
+            n_robots=n_robots, render_mode="human", render_fps=fps, **env_kwargs
+        )
         self._seed = seed
         self._paused = False
         self._restart(self._seed)

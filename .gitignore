@@ -1,4 +1,4 @@
-docs/
+docs/local/
 .DS_Store
 .venv/
 __pycache__/
@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 runs/
+local/
