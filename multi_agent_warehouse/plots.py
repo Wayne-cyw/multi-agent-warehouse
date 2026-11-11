@@ -605,7 +605,7 @@ def plot_all(exp_dir: Path) -> list[Path]:
 
 
 def promote(
-    exp_dir: Path, names: Sequence[str], dest: Path = Path("docs/multi_agent_warehouse")
+    exp_dir: Path, names: Sequence[str], dest: Path = Path("docs/evidence")
 ) -> list[Path]:
     """Copy `<exp_dir>/plots/<name>.png` for each name into `dest`; return the new paths.
 

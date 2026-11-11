@@ -46,7 +46,7 @@ python -m multi_agent_warehouse.experiment select --name NAME --variant V1
 
 Run outputs go to `runs/experiments/NAME/` (git-ignored): `manifest.json`, `eval_curve.csv`,
 `baselines.csv`, per-run training logs and snapshots, `plots/` and `report.md`. The numbers and
-figures that matter are copied into `docs/multi_agent_warehouse/results/`.
+figures that matter are copied into `docs/evidence/results/`.
 
 ## Variants
 

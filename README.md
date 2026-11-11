@@ -2,7 +2,7 @@
 <p align="center"><b>Three robots, one warehouse, one shared recurrent PPO brain. A from-scratch multi-agent RL project: the environment, the baselines, the training pipeline, and a set of seeded experiments that show what actually improved the agent.</b></p>
 
 <p align="center">
-  <img src="docs/multi_agent_warehouse/demo.gif" alt="The tuned recurrent PPO agent controlling three robots that deliver items in the warehouse" width="420"><br>
+  <img src="docs/evidence/demo.gif" alt="The tuned recurrent PPO agent controlling three robots that deliver items in the warehouse" width="420"><br>
   <sub>The shipped agent (tuned recurrent PPO, 1M steps) over 100 steps on evaluation seed 48: 43 deliveries, 6 collisions. Seed 48 is a clean example picked from seeds 40 to 79; the average over those seeds is about 31 deliveries and 25 collisions per 100 steps. All three robots run the same network.</sub>
 </p>
 
@@ -20,7 +20,7 @@
   fixed seeds with shaping off. The first version of this project, a plain 300k-step PPO, scored
   51.1.
 - **How it improved:** six multi-seed experiments with random training seeds
-  ([the write-ups](docs/multi_agent_warehouse/experiments/README.md)). A richer observation and an
+  ([the write-ups](docs/evidence/experiments/README.md)). A richer observation and an
   LSTM were the clear wins; layout randomisation did not help.
 - **The honesty:** it still collides about 4x more than random, the shipped model is the best of 5
   seeds (a typical run scores about 60), it generalises poorly to maze-like layouts, and the
@@ -56,7 +56,7 @@ shaping off, with 95% confidence intervals.
 
 ### How the model improved
 
-![Deliveries per episode while training: tuned versus the plain PPO baseline](docs/multi_agent_warehouse/learning_curve_deliveries.png)
+![Deliveries per episode while training: tuned versus the plain PPO baseline](docs/evidence/learning_curve_deliveries.png)
 
 The tuned model starts slower but overtakes the plain PPO by about 100k to 200k steps. At the same
 1M-step budget it is ahead by 4.6 deliveries (about 2.8 standard errors), with about 3.7x fewer
@@ -65,21 +65,21 @@ comparison, not a claim to beat a fully trained plain PPO.
 
 | Experiment | Question | Finding |
 |---|---|---|
-| [Rollout budget](docs/multi_agent_warehouse/experiments/00-rollout-budget.md) | Was SB3's default rollout size hurting? | `n_steps = 128` gave 55 to 60 deliveries against 41 |
-| [E0: seed spread](docs/multi_agent_warehouse/experiments/e0-seed-spread.md) | Is the committed 51 typical? | Yes: 5 seeds give 51.1 ± 4.6, range 44 to 57 |
-| [E1: longer training](docs/multi_agent_warehouse/experiments/e1-longer-training.md) | Where does plain PPO plateau? | About 61 at 2M to 3M steps; arg-max actions collapse to about 13 |
-| [E2: hyperparameter sweep](docs/multi_agent_warehouse/experiments/e2-hyperparameter-sweep.md) | Which knobs matter? | Collision penalty -0.3 and entropy 0.01 help (borderline); -1.0 hurts; shaping, discount, width: no clear effect |
-| [E3: observation and memory](docs/multi_agent_warehouse/experiments/e3-observation-and-memory.md) | Do richer observations and an LSTM help? | Yes, clearly: +7 (observation), +10 (LSTM), +12 (both) at 500k steps |
-| [E4: generalisation](docs/multi_agent_warehouse/experiments/e4-generalisation.md) | Does training on random layouts transfer? | No: 8 deliveries worse on held-out layouts |
-| [E5: tuned model](docs/multi_agent_warehouse/experiments/e5-tuned-model.md) | Does the combination beat the baseline and ship? | 60.0 vs 55.4 at 1M steps; passed the replacement rule |
+| [Rollout budget](docs/evidence/experiments/00-rollout-budget.md) | Was SB3's default rollout size hurting? | `n_steps = 128` gave 55 to 60 deliveries against 41 |
+| [E0: seed spread](docs/evidence/experiments/e0-seed-spread.md) | Is the committed 51 typical? | Yes: 5 seeds give 51.1 ± 4.6, range 44 to 57 |
+| [E1: longer training](docs/evidence/experiments/e1-longer-training.md) | Where does plain PPO plateau? | About 61 at 2M to 3M steps; arg-max actions collapse to about 13 |
+| [E2: hyperparameter sweep](docs/evidence/experiments/e2-hyperparameter-sweep.md) | Which knobs matter? | Collision penalty -0.3 and entropy 0.01 help (borderline); -1.0 hurts; shaping, discount, width: no clear effect |
+| [E3: observation and memory](docs/evidence/experiments/e3-observation-and-memory.md) | Do richer observations and an LSTM help? | Yes, clearly: +7 (observation), +10 (LSTM), +12 (both) at 500k steps |
+| [E4: generalisation](docs/evidence/experiments/e4-generalisation.md) | Does training on random layouts transfer? | No: 8 deliveries worse on held-out layouts |
+| [E5: tuned model](docs/evidence/experiments/e5-tuned-model.md) | Does the combination beat the baseline and ship? | 60.0 vs 55.4 at 1M steps; passed the replacement rule |
 
 **Sampled versus deterministic.** The plain PPO collapses when it takes the arg-max action (about 11
 deliveries, the same as greedy). The tuned recurrent policy mostly does not (55 deliveries), though
 sampling is still better (60). The cause is not diagnosed; memory plausibly lets the policy notice it
-has been blocked. See [E1](docs/multi_agent_warehouse/experiments/e1-longer-training.md) and
-[E3](docs/multi_agent_warehouse/experiments/e3-observation-and-memory.md).
+has been blocked. See [E1](docs/evidence/experiments/e1-longer-training.md) and
+[E3](docs/evidence/experiments/e3-observation-and-memory.md).
 
-![Sampled versus deterministic deliveries during training, tuned model](docs/multi_agent_warehouse/sampled_vs_deterministic_tuned.png)
+![Sampled versus deterministic deliveries during training, tuned model](docs/evidence/sampled_vs_deterministic_tuned.png)
 
 **Generalisation.** Both variants were trained on the default layout with 3 robots only, then scored
 on every layout and 2 to 6 robots. On the two layouts neither had seen, the tuned model averaged 42.7
@@ -87,7 +87,7 @@ deliveries against 34.7 for the plain PPO. On the default layout its total deliv
 robots (44 at 2 robots, 83 at 6), though per-robot throughput falls (about 22 to 14). The maze-like
 layout (`maze_lite`) stays poor for both (22 and 13).
 
-![Deliveries by layout and robot count](docs/multi_agent_warehouse/generalisation.png)
+![Deliveries by layout and robot count](docs/evidence/generalisation.png)
 
 ### What this does and does not show
 
@@ -97,7 +97,7 @@ layout (`maze_lite`) stays poor for both (22 and 13).
   experiments where every non-baseline seed beat every baseline seed.
 - **Not shown:** strong generalisation. The shipped model was trained on one map with 3 robots. It
   transfers well to a similar wider-gap map but stays poor on a maze-like one, and training on random
-  layouts did not fix that ([E4](docs/multi_agent_warehouse/experiments/e4-generalisation.md)).
+  layouts did not fix that ([E4](docs/evidence/experiments/e4-generalisation.md)).
 - **Several changes at once.** The tuned model bundles four changes. The experiments support the
   memory and observation changes clearly and the collision-penalty and entropy changes only
   tentatively; the final run did not isolate them.
@@ -112,7 +112,11 @@ layout (`maze_lite`) stays poor for both (22 and 13).
   so the guarantee holds only approximately here.
 - **Seed policy:** training seeds are random and recorded in each experiment's `manifest.json`, but
   `runs/` is git-ignored, so the seeds and evaluation blocks used are written in
-  [`FINDINGS.md`](docs/multi_agent_warehouse/results/FINDINGS.md) instead.
+  [`FINDINGS.md`](docs/evidence/results/FINDINGS.md) instead.
+
+The full list of caveats is in [`docs/limitations.md`](docs/limitations.md). To rerun anything, see
+[`docs/reproducing.md`](docs/reproducing.md); for how the code fits together, see
+[`docs/architecture.md`](docs/architecture.md).
 
 ## The RL Approach
 
@@ -172,7 +176,7 @@ never overlap a training seed, and every variant in an experiment is scored on t
 difference counts as real only if it is more than twice its standard error. `select` picks the best
 seed on one random validation block and reports it on a second, disjoint test block, so the reported
 score is not inflated by the choice. The full method, the variant table and the commands are in
-[`docs/multi_agent_warehouse/experiments/`](docs/multi_agent_warehouse/experiments/README.md).
+[`docs/evidence/experiments/`](docs/evidence/experiments/README.md).
 
 ## Challenges & What I Learned
 
@@ -182,14 +186,14 @@ score is not inflated by the choice. The full method, the variant table and the 
 - *Approach:* Work out the arithmetic before training: 24 sub-environments make the default rollout
   49,152 samples, so 300,000 steps give only about 7 updates. Then test smaller rollouts across
   several seeds rather than trusting one run.
-- *Result:* `n_steps = 128` raised deliveries from 41 to about 55 to 60 ([write-up](docs/multi_agent_warehouse/experiments/00-rollout-budget.md)).
+- *Result:* `n_steps = 128` raised deliveries from 41 to about 55 to 60 ([write-up](docs/evidence/experiments/00-rollout-budget.md)).
 
 **One run proves little**
 - *Problem:* The first README number came from one training seed.
 - *Approach:* Re-run the same recipe with 5 random seeds and measure the spread, then require every
   later claim to be a multi-seed comparison on a shared evaluation block.
 - *Result:* 51 turned out typical but ±5, which means most single-run "improvements" below that size
-  would have been noise ([E0](docs/multi_agent_warehouse/experiments/e0-seed-spread.md)).
+  would have been noise ([E0](docs/evidence/experiments/e0-seed-spread.md)).
 
 **A hypothesis that failed**
 - *Problem:* I expected training on many layouts to help on unseen ones.
@@ -197,14 +201,14 @@ score is not inflated by the choice. The full method, the variant table and the 
   the gap either way.
 - *Result:* It was 8 deliveries worse on held-out layouts, mostly because the "held-out" `wide_gap`
   is nearly the default map. Reporting that honestly, and leaving the idea out of the final model,
-  was the right call ([E4](docs/multi_agent_warehouse/experiments/e4-generalisation.md)).
+  was the right call ([E4](docs/evidence/experiments/e4-generalisation.md)).
 
 **Selecting a model without cheating**
 - *Problem:* Picking the best of 5 seeds on the same episodes you report on inflates the score.
 - *Approach:* Choose on a validation block, report on a disjoint test block, and set the rule for
   replacing the shipped model before looking at the result.
 - *Result:* The selected seed scored 63.0 on the test block while the others averaged 60.5, which is
-  why the README says a typical run is about 60 ([E5](docs/multi_agent_warehouse/experiments/e5-tuned-model.md)).
+  why the README says a typical run is about 60 ([E5](docs/evidence/experiments/e5-tuned-model.md)).
 
 **Seeding through a vectorised wrapper**
 - *Problem:* `PPO(..., seed=...)` crashes because SuperSuit's `ConcatVecEnv` has no `seed` method.
@@ -325,8 +329,14 @@ multi-agent-warehouse/
 ├── play.py           # live demo
 ├── tests/            # one test file per module
 └── docs/
-    ├── multi_agent_warehouse/experiments/  # one write-up per experiment
-    ├── multi_agent_warehouse/results/      # FINDINGS.md and the experiment figures
+    ├── README.md                           # index of the docs
+    ├── architecture.md                     # module map and data flow
+    ├── reproducing.md                      # commands, seeds and expected numbers
+    ├── limitations.md                      # everything the results do not show
+    ├── design-decisions.md                 # every decision and its trade-offs
+    ├── code-style.md
+    ├── evidence/experiments/               # one write-up per experiment
+    ├── evidence/results/                   # FINDINGS.md and the experiment figures
     └── study-notes/                        # learning notes
 ```
 

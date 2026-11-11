@@ -4,8 +4,7 @@ Every design decision in this project, with the reason behind it, the alternativ
 rejected, and the trade-off accepted. Read the [study notes](study-notes/README.md) first if a term
 is unfamiliar (one topic per file; the glossary is [15](study-notes/15-glossary.md)).
 
-**Sources:** `docs/superpowers/specs/2026-10-28-multi-agent-warehouse-design.md` (the spec),
-`docs/superpowers/plans/2026-10-28-multi-agent-warehouse.md` (the plan), `pyproject.toml`, and the
+**Sources:** the project's design spec and implementation plan, `pyproject.toml`, and the
 installed PettingZoo 1.27.0 source. Where a reason is not stated in those documents and I am
 inferring it, it is marked *(inferred)*.
 
@@ -661,7 +660,7 @@ Section I at the end lists **open questions, risks and inconsistencies** found w
 
 ### D-50: Pillow for the README GIF
 - **Status:** Decided (confirmed 2026-11-03). `scripts/record_demo.py` writes
-  `docs/multi_agent_warehouse/demo.gif` (greedy, seed 0, 100 steps, `duration=100`, `loop=0`; target under 3 MB).
+  `docs/evidence/demo.gif` (greedy, seed 0, 100 steps, `duration=100`, `loop=0`; target under 3 MB).
 - **Why:** A GIF shows the project working in the README without anyone running it. Pillow is the
   lightest way to write one.
 - **Current state:** `pyproject.toml` lists `pillow` in the `dev` extra (the spec's assumption that

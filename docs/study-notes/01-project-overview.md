@@ -91,8 +91,6 @@ search), so an edited map cannot seal off a target. See [08](08-warehouse-rules.
 
 | Document | Path | What it holds |
 | --- | --- | --- |
-| Design spec | `docs/superpowers/specs/2026-10-28-multi-agent-warehouse-design.md` | Rules, observation, rewards, rendering numbers |
-| Implementation plan | `docs/superpowers/plans/2026-10-28-multi-agent-warehouse.md` | 8 tasks in 5 stages and the tests each must pass |
 | Design decisions | `docs/design-decisions.md` | Every decision with reasons and trade-offs |
 | Packaging | `pyproject.toml` | Dependencies, the `rl` extra, pytest and ruff config |
 

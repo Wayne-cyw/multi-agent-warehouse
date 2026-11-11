@@ -45,9 +45,7 @@ made. The notes explain *what the ideas are*; that file explains *what we chose*
 | 4 | README, GIF, CI-equivalent checks | **Implemented.** The README is at the repo root. 59 tests pass; `ruff` is clean. |
 | 5 | `train.py`, trained model, `RLPolicy` | **Task 7 done** (`train.py`, `rl` extra, spike passed on 2026-11-07); Task 8 (`RLPolicy`, trained model) not started. |
 
-Where a note describes code that does not exist yet (Stages 5 and 6), it says **(planned)** and cites the spec
-(`docs/superpowers/specs/2026-10-28-multi-agent-warehouse-design.md`) or plan
-(`docs/superpowers/plans/2026-10-28-multi-agent-warehouse.md`). Update the table above and the
+Where a note describes code that does not exist yet (Stages 5 and 6), it says **(planned)**. Update the table above and the
 status table in [01-project-overview](01-project-overview.md#implementation-status) as stages land.
 
 ## Conventions used in these notes
